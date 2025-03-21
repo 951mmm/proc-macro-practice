@@ -1,9 +1,9 @@
 use proc_macro::TokenStream;
-use quote::{quote, ToTokens};
+use quote::{quote, ToTokens, TokenStreamExt};
 use syn::{
     parse_macro_input, parse_quote, AngleBracketedGenericArguments, Data, DataStruct, DeriveInput,
     Expr, ExprLit, Field, GenericArgument, GenericParam, Generics, Ident, ImplGenerics, Lit, Meta,
-    MetaNameValue, PathArguments, Type, TypeGenerics, TypePath, WhereClause,
+    MetaNameValue, Path, PathArguments, Type, TypeGenerics, TypePath, WhereClause,
 };
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
@@ -20,6 +20,7 @@ fn expand(ast: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let struct_ident = &ast.ident;
     let mut field_calls = quote! {};
     let mut phantom_data_generic_ty = None;
+    let mut trait_tys = vec![];
 
     // field stage
     match &ast.data {
@@ -30,6 +31,7 @@ fn expand(ast: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 if phantom_data_generic_ty.is_none() {
                     phantom_data_generic_ty = get_generic_inner_ty(field_ty, "PhantomData");
                 }
+                trait_tys.push(get_trait_ty(field_ty));
 
                 let attr_debug_lit = get_attr_debug_lit(field);
                 field_calls.extend(field_call(field_ident, attr_debug_lit));
@@ -40,15 +42,20 @@ fn expand(ast: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     // generic bound stage
     let generics = ast.generics;
     let generics = add_trait_bounds(generics, phantom_data_generic_ty);
-
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    let where_clause_extra = vec![
+        get_phantom_data_generic_ty_where_clause(phantom_data_generic_ty),
+        get_trait_ty_where_clause(trait_tys),
+    ];
+
+    let merged_where_clause = merge_where_clause_extra(where_clause_extra);
 
     let impl_expr = impl_expr(
         struct_ident,
         &impl_generics,
         &ty_generics,
         where_clause,
-        phantom_data_generic_ty,
+        merged_where_clause,
     );
     let result = quote! {
         #impl_expr {
@@ -90,12 +97,12 @@ fn get_attr_debug_lit(field: &Field) -> Option<&Lit> {
 
 fn get_generic_inner_ty<'a>(field_ty: &'a Type, outer: &str) -> Option<&'a Type> {
     if let Type::Path(TypePath { path, .. }) = field_ty {
-        let path_last = path.segments.last().unwrap();
+        let path_last = path.segments.last()?;
         if path_last.ident.eq(outer) {
             if let PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }) =
                 &path_last.arguments
             {
-                let generic_ty = args.last().unwrap();
+                let generic_ty = args.last()?;
 
                 if let GenericArgument::Type(ty) = generic_ty {
                     return Some(ty);
@@ -104,6 +111,37 @@ fn get_generic_inner_ty<'a>(field_ty: &'a Type, outer: &str) -> Option<&'a Type>
         }
     }
 
+    None
+}
+
+fn get_trait_ty(outer_ty: &Type) -> Option<&Type> {
+    println!("outer_ty: {}", outer_ty.to_token_stream());
+    if let Type::Path(TypePath { path, .. }) = outer_ty {
+        if path.segments.len() == 2 {
+            // println!("get trait ty path: {}", outer_ty.to_token_stream());
+            return Some(outer_ty);
+        }
+    }
+
+    if let Some(inner_ty) = get_inner_ty(outer_ty) {
+        return get_trait_ty(inner_ty);
+    }
+
+    None
+}
+
+fn get_inner_ty(outer_ty: &Type) -> Option<&Type> {
+    if let Type::Path(TypePath { path, .. }) = outer_ty {
+        let path_last = path.segments.last()?;
+        if let PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }) =
+            &path_last.arguments
+        {
+            let generic_ty = args.last().unwrap();
+            if let GenericArgument::Type(inner_ty) = generic_ty {
+                return Some(inner_ty);
+            }
+        }
+    }
     None
 }
 
@@ -128,9 +166,9 @@ fn impl_expr(
     impl_generics: &ImplGenerics,
     ty_generics: &TypeGenerics,
     where_clause: Option<&WhereClause>,
-    phantom_data_generic_ty: Option<&Type>,
+    where_clause_extra: Option<proc_macro2::TokenStream>,
 ) -> proc_macro2::TokenStream {
-    let where_clause = get_where_clause(where_clause, phantom_data_generic_ty);
+    let where_clause = get_where_clause(where_clause, where_clause_extra);
     quote! {
         impl #impl_generics std::fmt::Debug for #struct_ident #ty_generics
         #where_clause
@@ -139,23 +177,70 @@ fn impl_expr(
 
 fn get_where_clause(
     where_clause: Option<&WhereClause>,
-    phantom_data_generic_ty: Option<&Type>,
+    where_clause_extra: Option<proc_macro2::TokenStream>,
 ) -> proc_macro2::TokenStream {
-    match (where_clause, phantom_data_generic_ty) {
-        (Some(where_clause), Some(ty)) => {
+    match (where_clause, where_clause_extra) {
+        (Some(where_clause), Some(where_clause_extra)) => {
             quote! {
                 #where_clause
-                PhantomData<#ty>: std::fmt::Debug,
+                #where_clause_extra,
             }
         }
         (_, None) => {
             quote! {#where_clause}
         }
-        (_, Some(ty)) => {
+        (_, Some(where_clause_extra)) => {
             quote! {
                 where
-                PhantomData<#ty>: std::fmt::Debug,
+                #where_clause_extra
             }
         }
     }
+}
+
+fn get_phantom_data_generic_ty_where_clause(
+    phantom_data_generic_ty: Option<&Type>,
+) -> Option<proc_macro2::TokenStream> {
+    let ty = phantom_data_generic_ty?;
+    Some(quote! {
+        PhantomData<#ty>: std::fmt::Debug,
+    })
+}
+
+fn get_trait_ty_where_clause(trait_tys: Vec<Option<&Type>>) -> Option<proc_macro2::TokenStream> {
+    let any_some = trait_tys
+        .iter()
+        .fold(false, |acc, trait_ty_path| acc | trait_ty_path.is_some());
+
+    if !any_some {
+        return None;
+    }
+
+    let mut result = quote! {};
+    for trait_ty in trait_tys {
+        if let Some(trait_ty) = trait_ty {
+            result.extend(quote! {
+                #trait_ty: std::fmt::Debug,
+            });
+        }
+    }
+
+    Some(result)
+}
+
+fn merge_where_clause_extra(
+    where_clause_extra: Vec<Option<proc_macro2::TokenStream>>,
+) -> Option<proc_macro2::TokenStream> {
+    let mut result: Option<proc_macro2::TokenStream> = None;
+    for where_clause in where_clause_extra {
+        if let Some(where_clause) = where_clause {
+            if let Some(ref mut result) = result {
+                result.extend(where_clause);
+            } else {
+                result = Some(where_clause);
+            }
+        }
+    }
+
+    result
 }

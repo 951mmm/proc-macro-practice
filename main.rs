@@ -1,40 +1,45 @@
-// Figure out what impl needs to be generated for the Debug impl of Field<T>.
-// This will involve adding a trait bound to the T type parameter of the
-// generated impl.
+// This test case covers one more heuristic that is often worth incorporating
+// into derive macros that infer trait bounds. Here we look for the use of an
+// associated type of a type parameter.
 //
-// Callers should be free to instantiate Field<T> with a type parameter T which
-// does not implement Debug, but such a Field<T> will not fulfill the trait
-// bounds of the generated Debug impl and so will not be printable via Debug.
+// The generated impl will need to look like:
+//
+//     impl<T: Trait> Debug for Field<T>
+//     where
+//         T::Value: Debug,
+//     {...}
+//
+// You can identify associated types as any syn::TypePath in which the first
+// path segment is one of the type parameters and there is more than one
+// segment.
 //
 //
 // Resources:
 //
-//   - Representation of generics in the Syn syntax tree:
-//     https://docs.rs/syn/2.0/syn/struct.Generics.html
-//
-//   - A helper for placing generics into an impl signature:
-//     https://docs.rs/syn/2.0/syn/struct.Generics.html#method.split_for_impl
-//
-//   - Example code from Syn which deals with type parameters:
-//     https://github.com/dtolnay/syn/tree/master/examples/heapsize
+//   - The relevant types in the input will be represented in this syntax tree
+//     node: https://docs.rs/syn/2.0/syn/struct.TypePath.html
 
 use derive_debug::CustomDebug;
+use std::fmt::Debug;
 
-#[derive(CustomDebug)]
-pub struct Field<T> {
-    value: T,
-    #[debug = "0b{:08b}"]
-    bitmask: u8,
+pub trait Trait {
+    type Value;
 }
 
+#[derive(CustomDebug)]
+pub struct Field<T: Trait> {
+    values: Vec<T::Value>,
+}
+
+fn assert_debug<F: Debug>() {}
+
 fn main() {
-    let f = Field {
-        value: "F",
-        bitmask: 0b00011100,
-    };
+    // Does not implement Debug, but its associated type does.
+    struct Id;
 
-    let debug = format!("{:?}", f);
-    let expected = r#"Field { value: "F", bitmask: 0b00011100 }"#;
+    impl Trait for Id {
+        type Value = u8;
+    }
 
-    assert_eq!(debug, expected);
+    assert_debug::<Field<Id>>();
 }
