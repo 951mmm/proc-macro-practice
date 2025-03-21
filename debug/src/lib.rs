@@ -1,9 +1,13 @@
 use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
-    parse_macro_input, parse_quote, AngleBracketedGenericArguments, Data, DataStruct, DeriveInput,
-    Expr, ExprLit, Field, GenericArgument, GenericParam, Generics, Ident, ImplGenerics, Lit, Meta,
-    MetaNameValue, PathArguments, Type, TypeGenerics, TypePath, WhereClause,
+    parse::{Parse, ParseBuffer},
+    parse_macro_input, parse_quote,
+    spanned::Spanned,
+    AngleBracketedGenericArguments, Data, DataStruct, DeriveInput, Expr, ExprLit, Field,
+    GenericArgument, GenericParam, Generics, Ident, ImplGenerics, Lit, LitStr, Meta, MetaNameValue,
+    PathArguments, PredicateType, Token, TraitBound, Type, TypeGenerics, TypeParamBound, TypePath,
+    WhereClause, WherePredicate,
 };
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
@@ -18,9 +22,14 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
 fn expand(ast: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let struct_ident = &ast.ident;
+    let attr_bound = get_attr_bound(&ast)?;
+    // let attr_bounded_ty = get_attr_bounded_ty(&attr_bound_predition);
     let mut field_calls = quote! {};
     let mut phantom_data_generic_ty = None;
     let mut trait_tys = vec![];
+    if let Some(half_bound) = attr_bound.as_ref() {
+        trait_tys.push(Some(&half_bound.bound_type));
+    }
 
     // field stage
     match &ast.data {
@@ -43,9 +52,11 @@ fn expand(ast: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let generics = ast.generics;
     let generics = add_trait_bounds(generics, phantom_data_generic_ty, &trait_tys);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    // where clause stage
     let where_clause_extra = vec![
         get_phantom_data_generic_ty_where_clause(phantom_data_generic_ty),
         get_trait_ty_where_clause(trait_tys),
+        // get_attr_bound_where_clause(attr_bound.as_ref()),
     ];
 
     let merged_where_clause = merge_where_clause_extra(where_clause_extra);
@@ -68,6 +79,53 @@ fn expand(ast: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     };
 
     Ok(result)
+}
+
+struct HalfBound {
+    pub bound_type: Type,
+    #[allow(unused)]
+    pub colon: Token![:],
+    pub bound_trait: Type,
+}
+
+impl Parse for HalfBound {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        Ok(HalfBound {
+            bound_type: input.parse()?,
+            colon: input.parse()?,
+            bound_trait: input.parse()?,
+        })
+    }
+}
+
+// fn half_bound_to_token_stream(half_bound: &HalfBound) -> proc_macro2::TokenStream {
+//     let bound_type = &half_bound.bound_type;
+//     let colon = half_bound.colon;
+//     let bound_trait = &half_bound.bound_trait;
+//     quote! {
+//         #bound_type #colon #bound_trait
+//     }
+// }
+fn get_attr_bound(ast: &DeriveInput) -> syn::Result<Option<HalfBound>> {
+    let mut bound = None;
+    for attr in &ast.attrs {
+        if attr.path().is_ident("debug") {
+            println!("debug!");
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("bound") {
+                    println!("bound!");
+                    let value = meta.value()?;
+                    let lit = value.parse::<LitStr>()?;
+                    let half_bound = lit.parse::<HalfBound>()?;
+
+                    bound = Some(half_bound);
+                    return Ok(());
+                }
+                Err(meta.error("unsupported attribute"))
+            })?;
+        }
+    }
+    Ok(bound)
 }
 
 fn field_call(field_ident: &Ident, attr_debug_lit: Option<&Lit>) -> proc_macro2::TokenStream {
@@ -115,10 +173,8 @@ fn get_generic_inner_ty<'a>(field_ty: &'a Type, outer: &str) -> Option<&'a Type>
 }
 
 fn get_trait_ty(outer_ty: &Type) -> Option<&Type> {
-    println!("outer_ty: {}", outer_ty.to_token_stream());
     if let Type::Path(TypePath { path, .. }) = outer_ty {
         if path.segments.len() == 2 {
-            // println!("get trait ty path: {}", outer_ty.to_token_stream());
             return Some(outer_ty);
         }
     }
@@ -248,6 +304,14 @@ fn get_trait_ty_where_clause(trait_tys: Vec<Option<&Type>>) -> Option<proc_macro
 
     Some(result)
 }
+
+// fn get_attr_bound_where_clause(attr_bound: Option<&HalfBound>) -> Option<proc_macro2::TokenStream> {
+//     let attr_bound = attr_bound?;
+//     let token_stream = half_bound_to_token_stream(attr_bound);
+//     Some(quote! {
+//         #token_stream
+//     })
+// }
 
 fn merge_where_clause_extra(
     where_clause_extra: Vec<Option<proc_macro2::TokenStream>>,
