@@ -1,9 +1,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::Ident;
 use quote::quote;
-use syn::{
-    parse_macro_input, spanned::Spanned, DeriveInput, Field, LitStr, Type,
-};
+use syn::{parse_macro_input, spanned::Spanned, DeriveInput, Field, LitStr, Type};
 // #[derive(std::fmt::Debug)]
 // pub enum BuilderError {
 //     NoneField(std::string::String),
@@ -42,26 +40,21 @@ fn expand(ast: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let mut builder_initializes = quote! {};
     let mut struct_initializes = quote! {};
 
-    match &ast.data {
+    let result = match &ast.data {
         syn::Data::Struct(syn::DataStruct { fields, .. }) => {
-            // let field_idents = fields
-            //     .iter()
-            //     .map(|field| field.ident.as_ref().unwrap())
-            //     .collect::<Vec<_>>();
-
-            // let field_tys = fields.iter().map(|field| &field.ty).collect::<Vec<_>>();
-
-            // let field_each_fn_literals = fields
-            //     .iter()
-            //     .map(|field| get_attr_value(field))
-            //     .collect::<Vec<_>>();
-
             for field in fields {
                 let field_ident = get_field_ident(field);
                 let field_ty = &field.ty;
                 let option_inner_ty = get_generic_inner_ty(field, "Option");
                 let each_fn_literal = get_attr_value(field)?;
                 let vec_inner_ty = get_generic_inner_ty(field, "Vec");
+
+                if each_fn_literal.is_some() && vec_inner_ty.is_none() {
+                    return Err(syn::Error::new(
+                        field.span(),
+                        "type attred with `#[builder (each = \"...\")]` should be Vec<_>",
+                    ));
+                }
 
                 builder_fields.extend(get_builder_field(
                     field_ident,
@@ -92,7 +85,7 @@ fn expand(ast: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                     &each_fn_literal,
                 ));
             }
-            Ok(quote! {
+            quote! {
                 pub struct #builder_ident {
                     #builder_fields
                 }
@@ -118,10 +111,12 @@ fn expand(ast: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                     }
                 }
 
-            })
+            }
         }
-        _ => unimplemented!(),
-    }
+        _ => quote! {},
+    };
+
+    Ok(result)
 }
 
 fn get_builder_field(
@@ -154,7 +149,6 @@ fn get_builder_implementation(
 ) -> proc_macro2::TokenStream {
     let (fn_ident, assign_expr, arg_ty) = match each_fn_literal {
         Some(fn_literal) => {
-            debug_assert!(vec_inner_ty.is_some());
             let vec_inner_ty = vec_inner_ty.unwrap();
             let fn_ident = Ident::new(fn_literal, field_ident.span());
             let assign_expr = quote! {
