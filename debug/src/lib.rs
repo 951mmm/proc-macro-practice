@@ -1,9 +1,9 @@
 use proc_macro::TokenStream;
-use quote::{quote, ToTokens, TokenStreamExt};
+use quote::{quote, ToTokens};
 use syn::{
     parse_macro_input, parse_quote, AngleBracketedGenericArguments, Data, DataStruct, DeriveInput,
     Expr, ExprLit, Field, GenericArgument, GenericParam, Generics, Ident, ImplGenerics, Lit, Meta,
-    MetaNameValue, Path, PathArguments, Type, TypeGenerics, TypePath, WhereClause,
+    MetaNameValue, PathArguments, Type, TypeGenerics, TypePath, WhereClause,
 };
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
@@ -41,7 +41,7 @@ fn expand(ast: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     };
     // generic bound stage
     let generics = ast.generics;
-    let generics = add_trait_bounds(generics, phantom_data_generic_ty);
+    let generics = add_trait_bounds(generics, phantom_data_generic_ty, &trait_tys);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let where_clause_extra = vec![
         get_phantom_data_generic_ty_where_clause(phantom_data_generic_ty),
@@ -145,7 +145,11 @@ fn get_inner_ty(outer_ty: &Type) -> Option<&Type> {
     None
 }
 
-fn add_trait_bounds(mut generics: Generics, phantom_data_generic_ty: Option<&Type>) -> Generics {
+fn add_trait_bounds(
+    mut generics: Generics,
+    phantom_data_generic_ty: Option<&Type>,
+    trait_tys: &Vec<Option<&Type>>,
+) -> Generics {
     for param in &mut generics.params {
         if let GenericParam::Type(ref mut type_param) = *param {
             if let Some(ty) = phantom_data_generic_ty {
@@ -154,11 +158,28 @@ fn add_trait_bounds(mut generics: Generics, phantom_data_generic_ty: Option<&Typ
                     continue;
                 }
             }
+            if trait_has_type(&type_param.ident, trait_tys) {
+                continue;
+            }
+
             type_param.bounds.push(parse_quote!(std::fmt::Debug));
         }
     }
 
     generics
+}
+
+fn trait_has_type(trait_ident: &Ident, trait_tys: &Vec<Option<&Type>>) -> bool {
+    for trait_ty in trait_tys {
+        if let Some(trait_ty) = trait_ty {
+            if let Type::Path(TypePath { path, .. }) = trait_ty {
+                if let Some(segment) = path.segments.first() {
+                    return segment.ident.eq(trait_ident);
+                }
+            }
+        }
+    }
+    false
 }
 
 fn impl_expr(
