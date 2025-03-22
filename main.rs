@@ -1,45 +1,43 @@
-// This test case covers one more heuristic that is often worth incorporating
-// into derive macros that infer trait bounds. Here we look for the use of an
-// associated type of a type parameter.
+// The #[sorted] macro is only defined to work on enum types, so this is a test
+// to ensure that when it's attached to a struct (or anything else) it produces
+// some reasonable error. Your macro will need to look into the syn::Item that
+// it parsed to ensure that it represents an enum, returning an error for any
+// other type of Item such as a struct.
 //
-// The generated impl will need to look like:
+// This is an exercise in exploring how to return errors from procedural macros.
+// The goal is to produce an understandable error message which is tailored to
+// this specific macro (saying that #[sorted] cannot be applied to things other
+// than enum). For this you'll want to look at the syn::Error type, how to
+// construct it, and how to return it.
 //
-//     impl<T: Trait> Debug for Field<T>
-//     where
-//         T::Value: Debug,
-//     {...}
+// Notice that the return value of an attribute macro is simply a TokenStream,
+// not a Result with an error. The syn::Error type provides a method to render
+// your error as a TokenStream containing an invocation of the compile_error
+// macro.
 //
-// You can identify associated types as any syn::TypePath in which the first
-// path segment is one of the type parameters and there is more than one
-// segment.
+// A final tweak you may want to make is to have the `sorted` function delegate
+// to a private helper function which works with Result, so most of the macro
+// can be written with Result-returning functions while the top-level function
+// handles the conversion down to TokenStream.
 //
 //
-// Resources:
+// Resources
 //
-//   - The relevant types in the input will be represented in this syntax tree
-//     node: https://docs.rs/syn/2.0/syn/struct.TypePath.html
+//   - The syn::Error type:
+//     https://docs.rs/syn/2.0/syn/struct.Error.html
 
-use derive_debug::CustomDebug;
-use std::fmt::Debug;
+use sorted::sorted;
 
-pub trait Trait {
-    type Value;
+#[sorted]
+pub struct Error {
+    kind: ErrorKind,
+    message: String,
 }
 
-#[derive(CustomDebug)]
-pub struct Field<T: Trait> {
-    values: Vec<T::Value>,
+enum ErrorKind {
+    Io,
+    Syntax,
+    Eof,
 }
 
-fn assert_debug<F: Debug>() {}
-
-fn main() {
-    // Does not implement Debug, but its associated type does.
-    struct Id;
-
-    impl Trait for Id {
-        type Value = u8;
-    }
-
-    assert_debug::<Field<Id>>();
-}
+fn main() {}

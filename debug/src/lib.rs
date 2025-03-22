@@ -1,13 +1,10 @@
 use proc_macro::TokenStream;
-use quote::{quote, ToTokens};
+use quote::quote;
 use syn::{
-    parse::{Parse, ParseBuffer},
-    parse_macro_input, parse_quote,
-    spanned::Spanned,
-    AngleBracketedGenericArguments, Data, DataStruct, DeriveInput, Expr, ExprLit, Field,
-    GenericArgument, GenericParam, Generics, Ident, ImplGenerics, Lit, LitStr, Meta, MetaNameValue,
-    PathArguments, PredicateType, Token, TraitBound, Type, TypeGenerics, TypeParamBound, TypePath,
-    WhereClause, WherePredicate,
+    parse::Parse, parse_macro_input, parse_quote, AngleBracketedGenericArguments, Data, DataStruct,
+    DeriveInput, Expr, ExprLit, Field, GenericArgument, GenericParam, Generics, Ident,
+    ImplGenerics, Lit, LitStr, Meta, MetaNameValue, PathArguments, Token, Type, TypeGenerics,
+    TypePath, WhereClause,
 };
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
@@ -81,9 +78,9 @@ fn expand(ast: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     Ok(result)
 }
 
+#[allow(unused)]
 struct HalfBound {
     pub bound_type: Type,
-    #[allow(unused)]
     pub colon: Token![:],
     pub bound_trait: Type,
 }
