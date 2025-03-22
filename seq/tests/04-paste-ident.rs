@@ -23,7 +23,7 @@
 use seq::seq;
 
 seq!(N in 1..4 {
-    fn f~N () -> u64 {
+    fn f~N~a () -> u64 {
         N * 2
     }
 });
@@ -38,7 +38,7 @@ fn f0() -> u64 {
 }
 
 fn main() {
-    let sum = f0() + f1() + f2() + f3();
+    let sum = f0a() + f1a() + f2a() + f3a();
 
     assert_eq!(sum, 100 + 2 + 4 + 6);
 }
