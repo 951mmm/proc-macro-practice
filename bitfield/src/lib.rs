@@ -29,10 +29,10 @@ seq!(N in 1..=64 {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Specifier, B1};
+    use crate::{Specifier, B64};
 
     #[test]
     fn test_specifier() {
-        assert_eq!(<B1 as Specifier>::BITS, 1);
+        assert_eq!(<B64 as Specifier>::BITS, 64);
     }
 }

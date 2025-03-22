@@ -3,19 +3,14 @@ use std::collections::VecDeque;
 use proc_macro::TokenStream;
 use proc_macro2::{Delimiter, Group, Literal, TokenTree};
 use quote::TokenStreamExt;
-use syn::{braced, parse::Parse, parse_macro_input, Ident, LitInt, Token};
+use syn::{braced, parse::Parse, parse_macro_input, Ident, LitInt, RangeLimits, Token};
 
 struct Seq {
     ident: Ident,
     st: LitInt,
     ed: LitInt,
-    seq_range: SeqRange,
+    range_limits: RangeLimits,
     content: proc_macro2::TokenStream,
-}
-
-enum SeqRange {
-    Closed,
-    HalfOpen,
 }
 
 impl Parse for Seq {
@@ -24,11 +19,7 @@ impl Parse for Seq {
         let ident = input.parse::<Ident>()?;
         input.parse::<Token![in]>()?;
         let st = input.parse::<LitInt>()?;
-        input.parse::<Token![..]>()?;
-        let seq_range = match input.parse::<Token![=]>() {
-            Ok(_) => SeqRange::Closed,
-            Err(_) => SeqRange::HalfOpen,
-        };
+        let range_limits = input.parse::<RangeLimits>()?;
         let ed = input.parse::<LitInt>()?;
         braced!(content in input);
         let content = content.parse::<proc_macro2::TokenStream>()?;
@@ -36,7 +27,7 @@ impl Parse for Seq {
             ident,
             st,
             ed,
-            seq_range,
+            range_limits,
             content,
         })
     }
@@ -50,12 +41,12 @@ pub fn seq(input: TokenStream) -> TokenStream {
         content,
         st,
         ed,
-        seq_range,
+        range_limits,
         ident,
     } = seq;
     let st = st.base10_parse::<i32>().unwrap();
     let mut ed = ed.base10_parse::<i32>().unwrap();
-    if matches!(seq_range, SeqRange::Closed) {
+    if matches!(range_limits, RangeLimits::Closed(_)) {
         ed += 1;
     }
     let mut parser = Parser {
