@@ -38,7 +38,7 @@ fn f0() -> u64 {
 }
 
 fn main() {
-    let sum = f0a() + f1a() + f2a() + f3a();
+    let sum = f0() + f1a() + f2a() + f3a();
 
     assert_eq!(sum, 100 + 2 + 4 + 6);
 }

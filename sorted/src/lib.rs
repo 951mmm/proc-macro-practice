@@ -4,8 +4,8 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{quote, ToTokens};
 use syn::{
-    parse::Parse, parse_macro_input, spanned::Spanned, Attribute, Block, Expr, ExprMatch, Item,
-    ItemEnum, ItemFn, Pat, PatIdent, PatPath, PatTupleStruct, Stmt,
+    parse::Parse, parse_macro_input, spanned::Spanned, Attribute, Expr, ExprMatch, Item, ItemEnum,
+    ItemFn, Pat, PatIdent, PatTupleStruct, Stmt,
 };
 
 #[proc_macro_attribute]

@@ -9,7 +9,13 @@ struct Seq {
     ident: Ident,
     st: LitInt,
     ed: LitInt,
+    seq_range: SeqRange,
     content: proc_macro2::TokenStream,
+}
+
+enum SeqRange {
+    Closed,
+    HalfOpen,
 }
 
 impl Parse for Seq {
@@ -19,6 +25,10 @@ impl Parse for Seq {
         input.parse::<Token![in]>()?;
         let st = input.parse::<LitInt>()?;
         input.parse::<Token![..]>()?;
+        let seq_range = match input.parse::<Token![=]>() {
+            Ok(_) => SeqRange::Closed,
+            Err(_) => SeqRange::HalfOpen,
+        };
         let ed = input.parse::<LitInt>()?;
         braced!(content in input);
         let content = content.parse::<proc_macro2::TokenStream>()?;
@@ -26,6 +36,7 @@ impl Parse for Seq {
             ident,
             st,
             ed,
+            seq_range,
             content,
         })
     }
@@ -39,10 +50,14 @@ pub fn seq(input: TokenStream) -> TokenStream {
         content,
         st,
         ed,
+        seq_range,
         ident,
     } = seq;
     let st = st.base10_parse::<i32>().unwrap();
-    let ed = ed.base10_parse::<i32>().unwrap();
+    let mut ed = ed.base10_parse::<i32>().unwrap();
+    if matches!(seq_range, SeqRange::Closed) {
+        ed += 1;
+    }
     let mut parser = Parser {
         st,
         ed,
@@ -297,7 +312,7 @@ impl Parser {
                     // look ahead
                     let cur = iter.next();
                     if let Some(cur) = cur {
-                        if let TokenTree::Punct(punct) = cur {
+                        if let TokenTree::Punct(punct) = &cur {
                             if punct.as_char().eq(&'~') {
                                 state = State::IdentTildeNTilde;
                                 continue;
@@ -305,6 +320,7 @@ impl Parser {
                         }
                         self.join_and_replace_ident_stack(&mut ident_stack, n);
                         result.append(ident_stack.pop_back().unwrap());
+                        result.append(cur);
                         state = State::Start;
                     } else {
                         state = State::End;
@@ -312,7 +328,7 @@ impl Parser {
                 }
 
                 State::IdentTildeNTilde => {
-                    let cur = iter.clone().next();
+                    let cur = iter.next();
                     if let Some(cur) = cur {
                         match cur {
                             TokenTree::Ident(ident_inner) => {
