@@ -68,8 +68,6 @@ pub fn seq(input: TokenStream) -> TokenStream {
 
     let result = parser.parse(content);
 
-    println!("result: {}", result);
-
     result.into()
 }
 
@@ -240,16 +238,22 @@ impl Parser {
         token_stream: proc_macro2::TokenStream,
         n: i32,
     ) -> proc_macro2::TokenStream {
-        // println!("current: {}", token_stream);
         let mut result = proc_macro2::TokenStream::new();
         let mut iter = token_stream.into_iter();
         let mut state = State::Start;
         let mut ident_stack = VecDeque::new();
+        let mut look_ahead_stack = vec![];
 
         loop {
             match state {
                 State::Start => {
-                    let cur = iter.next();
+                    let cur = if !look_ahead_stack.is_empty() {
+                        debug_assert!(look_ahead_stack.len() <= 1);
+                        look_ahead_stack.pop()
+                    } else {
+                        iter.next()
+                    };
+
                     if let Some(cur) = cur {
                         match cur {
                             TokenTree::Group(group) => {
@@ -320,7 +324,7 @@ impl Parser {
                         }
                         self.join_and_replace_ident_stack(&mut ident_stack, n);
                         result.append(ident_stack.pop_back().unwrap());
-                        result.append(cur);
+                        look_ahead_stack.push(cur);
                         state = State::Start;
                     } else {
                         state = State::End;

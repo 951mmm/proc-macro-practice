@@ -16,16 +16,16 @@ pub trait Specifier {
     const BITS: u8;
 }
 
-// seq!(N in 1..64 {
-//     pub struct B~N;
-//     impl Specifier for B~N {
-//         const BITS: u8 = N;
-//     }
-// });
-pub struct B1;
-impl Specifier for B1 {
-    const BITS: u8 = 1;
-}
+seq!(N in 1..=64 {
+    pub struct B~N;
+    impl Specifier for B~N {
+        const BITS: u8 = N;
+    }
+});
+// pub struct B1;
+// impl Specifier for B1 {
+//     const BITS: u8 = 1;
+// }
 
 #[cfg(test)]
 mod tests {
