@@ -1,15 +1,22 @@
-// Write an attribute macro that replaces the struct in its input with a byte
-// array representation of the correct size. For example the invocation in the
-// test case below might expand to the following where the `size` expression is
-// computed by summing the Specifier::BITS constant of each field type.
+// Generate getters and setters that manipulate the right range of bits
+// corresponding to each field.
 //
-//     #[repr(C)]
-//     pub struct MyFourBytes {
-//         data: [u8; #size],
-//     }
 //
-// Don't worry for now what happens if the total bit size is not a multiple of
-// 8 bits. We will come back to that later to make it a compile-time error.
+//     ║  first byte   ║  second byte  ║  third byte   ║  fourth byte  ║
+//     ╟───────────────╫───────────────╫───────────────╫───────────────╢
+//     ║▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒ ▒║
+//     ╟─╫─────╫───────╫───────────────────────────────────────────────╢
+//     ║a║  b  ║   c   ║                       d                       ║
+//
+//
+// Depending on your implementation, it's possible that this will require adding
+// some associated types, associated constants, or associated functions to your
+// bitfield::Specifier trait next to the existing Specifier::BITS constant, but
+// it may not.
+//
+// If it's easier for now, you can use u64 as the argument type for all the
+// setters and return type for all the getters. We will follow up with a more
+// precise signature in a later test case.
 
 use bitfield::*;
 
@@ -22,5 +29,15 @@ pub struct MyFourBytes {
 }
 
 fn main() {
-    assert_eq!(std::mem::size_of::<MyFourBytes>(), 4);
+    let mut bitfield = MyFourBytes::new();
+    assert_eq!(0, bitfield.get_a());
+    assert_eq!(0, bitfield.get_b());
+    assert_eq!(0, bitfield.get_c());
+    assert_eq!(0, bitfield.get_d());
+
+    bitfield.set_c(14);
+    assert_eq!(0, bitfield.get_a());
+    assert_eq!(0, bitfield.get_b());
+    assert_eq!(14, bitfield.get_c());
+    assert_eq!(0, bitfield.get_d());
 }
