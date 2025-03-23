@@ -23,6 +23,10 @@ seq!(N in 1..=64 {
     }
 });
 
+pub struct Byte;
+impl Specifier for Byte {
+    const BITS: u8 = 8;
+}
 #[cfg(test)]
 mod tests {
     use crate::{Specifier, B64};

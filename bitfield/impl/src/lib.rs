@@ -1,8 +1,8 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    parse_macro_input, parse_quote, spanned::Spanned, Attribute, Fields, FieldsNamed, Ident, Item,
-    ItemStruct, Type, TypePath,
+    parse_macro_input, parse_quote, spanned::Spanned, Attribute, Expr, Field, Fields, FieldsNamed,
+    Ident, Item, ItemStruct, Type, TypePath,
 };
 
 #[proc_macro_attribute]
@@ -31,7 +31,6 @@ fn resolve_bitfield(ast: &mut Item) -> syn::Result<proc_macro2::TokenStream> {
             resolve_attr(attrs);
 
             let impl_fn = resolve_fields(fields)?;
-            // println!("#impl: {}", impl_fn);
 
             Ok(quote! {
                 impl #ident {
@@ -96,135 +95,103 @@ macro_rules! mask {
 }
 
 fn get_getters(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
-    let mut size_sum: u16 = 0;
     let mut getters = vec![];
+    let mut offset_total_stmts = vec![quote! {let mut offset = 0u16;}];
     for field in fields {
-        let ident = field.ident.clone().unwrap();
+        let ident = get_ident(field)?;
         let fn_ident = Ident::new(&format!("get_{}", ident.to_string()), ident.span());
-        let mut size = get_size(&field.ty)?;
-        let byte_offset = size_sum / BYTE_LEN;
-        let byte_offset_usize = byte_offset as usize;
-        let offset = size_sum % BYTE_LEN;
-        let offset_u8 = offset as u8;
+        let ty = &field.ty;
 
-        // |++++++++|+++++++|
-        // |  |    |
-        // |  |size|
-        // | offset
-        // byte offset
-        let mut stmts = vec![];
-        let mut offset_sum: u64 = 0;
-        if offset != 0 {
-            let rest_size = BYTE_LEN - offset;
-            let dt = if size >= rest_size as u8 {
-                rest_size as u8
-            } else {
-                size
-            };
-            let mask = mask!(dt) as u8;
-            stmts.push(quote! {
-                let mut result = 0_u64;
-                result += ((self.data[#byte_offset_usize]>>#offset_u8) & #mask) as u64;
-            });
-
-            size -= dt;
-            offset_sum += dt as u64;
-        } else {
-            stmts.push(quote! {
-                let mut result = 0_u64;
-            });
-        }
-
-        while size >= BYTE_LEN as u8 {
-            let byte_offset_usize = ((size_sum + offset_sum as u16) / BYTE_LEN) as usize;
-            stmts.push(quote! {
-                result += (self.data[#byte_offset_usize] as u64)<<#offset_sum;
-            });
-            size -= BYTE_LEN as u8;
-            offset_sum += BYTE_LEN as u64;
-        }
-
-        if size != 0 {
-            let byte_offset_usize = ((size_sum + offset_sum as u16) / BYTE_LEN) as usize;
-            let mask = mask!(size) as u8;
-            stmts.push(quote! {
-                result += ((self.data[#byte_offset_usize] & #mask) as u64)<<#offset_sum;
-            });
-            offset_sum += size as u64;
-        }
-        stmts.push(quote! {
-            result
-        });
         getters.push(quote! {
-            pub fn #fn_ident(&self) -> u64 {
-                #(#stmts)*
+            fn #fn_ident(&self) -> u64 {
+                #(#offset_total_stmts)*;
+                let mut size = <#ty as Specifier>::BITS;
+                let byte_size = <Byte as Specifier>::BITS;
+                let index = offset / byte_size as u16;
+                let offset_inner = offset % byte_size as u16;
+
+                let mut result = 0u64;
+                let mut offset_total = 0u64;
+                let size_reverse = byte_size - offset_inner as u8;
+                if size <= size_reverse {
+                    return self.get_data(index as usize, offset_inner as u8, size) as u64;
+                }
+
+                result += self.get_data(index as usize, offset_inner as u8, size_reverse) as u64;
+                size -= size_reverse;
+                offset_total += size_reverse as u64;
+
+                while size >= byte_size {
+                    let index = (offset + offset_total as u16) / byte_size as u16;
+                    result += (self.get_data(index as usize, 0, byte_size) as u64) << offset_total;
+                    size -= byte_size;
+                    offset_total += byte_size as u64;
+                }
+
+                if size > 0 {
+                    let index = (offset + offset_total as u16) / byte_size as u16;
+                    result += (self.get_data(index as usize, 0, size) as u64) << offset_total;
+                }
+
+                 result
             }
         });
 
-        size_sum += offset_sum as u16;
+        offset_total_stmts.push(quote! {
+            offset += <#ty as Specifier>::BITS as u16;
+        });
     }
-
     Ok(quote! {
+        fn get_data(&self, index: usize, offset: u8, size: u8) -> u8 {
+            let byte = self.data[index];
+            let byte = byte >> offset;
+            let mask = ((1 << size as u16) - 1) as u8;
+            byte & mask
+        }
         #(#getters)*
     })
 }
 fn get_setters(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
-    let mut size_sum: u16 = 0;
     let mut setters = vec![];
-
+    let mut offset_total_stmts = vec![quote! {let mut offset = 0u16;}];
     for field in fields {
-        let ident = field.ident.clone().unwrap();
+        let ident = get_ident(field)?;
         let fn_ident = Ident::new(&format!("set_{}", ident.to_string()), ident.span());
-        let mut size = get_size(&field.ty)?;
-        let byte_offset = (size_sum / BYTE_LEN) as usize;
-        let offset = size_sum % BYTE_LEN;
-        let offset_u8 = offset as u8;
-
-        let mut stmts = vec![];
-        let mut offset_sum: u64 = 0;
-        let rest_size = BYTE_LEN - offset;
-        let dt = if size >= rest_size as u8 {
-            rest_size as u8
-        } else {
-            size
-        };
-
-        let mask = mask!(dt) as u64;
-
-        stmts.push(quote! {
-            self.set_data(#byte_offset, #offset_u8, #dt, (value&#mask) as u8);
-        });
-
-        size -= dt;
-        offset_sum += dt as u64;
-
-        while size >= BYTE_LEN as u8 {
-            let byte_offset = ((size_sum + offset_sum as u16) / BYTE_LEN) as usize;
-            let byte_len_u8 = BYTE_LEN as u8;
-            stmts.push(quote! {
-                self.set_data(#byte_offset, 0u8, #byte_len_u8, (value>>#offset_sum) as u8);
-            });
-            offset_sum += BYTE_LEN as u64;
-            size -= BYTE_LEN as u8;
-        }
-
-        if size != 0 {
-            let byte_offset = ((size_sum + offset_sum as u16) / BYTE_LEN) as usize;
-            stmts.push(quote! {
-                self.set_data(#byte_offset, 0u8, #size, (value>>#offset_sum) as u8);
-            });
-            offset_sum += size as u64;
-        }
+        let ty = &field.ty;
 
         setters.push(quote! {
-            pub fn #fn_ident(&mut self, value: u64) {
-                #(#stmts)*
+            fn #fn_ident(&mut self, value: u64) {
+                #(#offset_total_stmts)*
+                let mut size = <#ty as Specifier>::BITS;
+                let byte_size = <Byte as Specifier>::BITS;
+                let index = offset / byte_size as u16;
+                let offset_inner = offset % byte_size as u16;
+                let size_reverse = byte_size - offset_inner as u8;
+
+                let mut offset_total = 0u64;
+                if size <= size_reverse {
+                    self.set_data(index as usize, offset_inner as u8, size, value as u8);
+                    return;
+                }
+
+                offset_total += size_reverse as u64;
+                while(size >= byte_size) {
+                    let index = (offset + offset_total as u16) / byte_size as u16;
+                    self.set_data(index as usize, 0, byte_size, (value >> offset_total) as u8);
+                    size -= byte_size;
+                    offset_total += byte_size as u64;
+                }
+
+                if size > 0 {
+                    let index = (offset + offset_total as u16) / byte_size as u16;
+                    self.set_data(index as usize, 0, size, (value >> offset_total) as u8);
+                }
             }
         });
-
-        size_sum += offset_sum as u16;
+        offset_total_stmts.push(quote! {
+            offset += <#ty as Specifier>::BITS as u16;
+        });
     }
-
     Ok(quote! {
         fn set_data(&mut self, index: usize, offset: u8, size: u8, value: u8) {
             let mask = ((1_u16 << size as u16) - 1) as u8;
@@ -232,10 +199,18 @@ fn get_setters(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
             let clear_mask = !offset_mask;
             let offset_value = value << offset;
             self.data[index] &= clear_mask;
-            self.data[index] |= offset_value;
+            self.data[index] |= offset_value & offset_mask;
+
         }
         #(#setters)*
     })
+}
+
+fn get_ident(field: &Field) -> syn::Result<Ident> {
+    match field.ident.clone() {
+        Some(ident) => Ok(ident),
+        None => Err(syn::Error::new(field.span(), "expected named field")),
+    }
 }
 
 fn get_size(ty: &Type) -> syn::Result<u8> {
