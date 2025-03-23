@@ -22,10 +22,6 @@ seq!(N in 1..=64 {
         const BITS: u8 = N;
     }
 });
-// pub struct B1;
-// impl Specifier for B1 {
-//     const BITS: u8 = 1;
-// }
 
 #[cfg(test)]
 mod tests {

@@ -1,11 +1,8 @@
-use std::process::id;
-
 use proc_macro::TokenStream;
-use proc_macro2::Literal;
 use quote::quote;
 use syn::{
-    parse_macro_input, parse_quote, spanned::Spanned, Attribute, Expr, Field, Fields, FieldsNamed,
-    FnArg, Ident, Item, ItemStruct, Type, TypePath,
+    parse_macro_input, parse_quote, spanned::Spanned, Attribute, Fields, FieldsNamed, Ident, Item,
+    ItemStruct, Type, TypePath,
 };
 
 #[proc_macro_attribute]
