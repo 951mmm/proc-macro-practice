@@ -1,14 +1,8 @@
 error[E0277]: the trait bound `SevenMod8: bitfield::TotalSizeIsMultipleOfEightBits` is not satisfied
-  --> tests/04-multiple-of-8bits.rs:55:5
+  --> tests/04-multiple-of-8bits.rs:53:1
    |
-53 |   #[bitfield]
-   |   ----------- required by a bound introduced by this call
-54 |   pub struct NotQuiteFourBytes {
-55 | /     a: A,
-56 | |     b: B,
-57 | |     c: C,
-58 | |     d: D,
-   | |_____^ the trait `bitfield::TotalSizeIsMultipleOfEightBits` is not implemented for `SevenMod8`
+53 | #[bitfield]
+   | ^^^^^^^^^^^ the trait `bitfield::TotalSizeIsMultipleOfEightBits` is not implemented for `SevenMod8`
    |
    = help: the trait `bitfield::TotalSizeIsMultipleOfEightBits` is implemented for `ZeroMod8`
 note: required by a bound in `assert`

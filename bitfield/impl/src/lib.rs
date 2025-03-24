@@ -1,5 +1,3 @@
-use std::fmt::format;
-
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{quote, quote_spanned, ToTokens};
@@ -97,36 +95,37 @@ fn get_getters(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
         let ident = get_ident(field)?;
         let fn_ident = Ident::new(&format!("get_{}", ident.to_string()), ident.span());
         let ty = &field.ty;
+        let uint_type = quote! {<#ty as UintSpecifier>::Uint};
 
         getters.push(quote! {
-            fn #fn_ident(&self) -> u64 {
+            fn #fn_ident(&self) -> #uint_type {
                 #(#offset_total_stmts)*;
                 let mut size = <#ty as Specifier>::BITS;
                 let byte_size = <Byte as Specifier>::BITS;
                 let index = offset / byte_size as u16;
                 let offset_inner = offset % byte_size as u16;
 
-                let mut result = 0u64;
-                let mut offset_total = 0u64;
+                let mut result = 0;
+                let mut offset_total = 0;
                 let size_reverse = byte_size - offset_inner as u8;
                 if size <= size_reverse {
-                    return self.get_data(index as usize, offset_inner as u8, size) as u64;
+                    return self.get_data(index as usize, offset_inner as u8, size) as #uint_type;
                 }
 
-                result += self.get_data(index as usize, offset_inner as u8, size_reverse) as u64;
+                result += self.get_data(index as usize, offset_inner as u8, size_reverse) as #uint_type;
                 size -= size_reverse;
-                offset_total += size_reverse as u64;
+                offset_total += size_reverse as #uint_type;
 
                 while size >= byte_size {
                     let index = (offset + offset_total as u16) / byte_size as u16;
-                    result += (self.get_data(index as usize, 0, byte_size) as u64) << offset_total;
+                    result += (self.get_data(index as usize, 0, byte_size) as #uint_type) << offset_total;
                     size -= byte_size;
-                    offset_total += byte_size as u64;
+                    offset_total += byte_size as #uint_type;
                 }
 
                 if size > 0 {
                     let index = (offset + offset_total as u16) / byte_size as u16;
-                    result += (self.get_data(index as usize, 0, size) as u64) << offset_total;
+                    result += (self.get_data(index as usize, 0, size) as #uint_type) << offset_total;
                 }
 
                  result
@@ -154,9 +153,10 @@ fn get_setters(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
         let ident = get_ident(field)?;
         let fn_ident = Ident::new(&format!("set_{}", ident.to_string()), ident.span());
         let ty = &field.ty;
+        let uint_type = quote! {<#ty as UintSpecifier>::Uint};
 
         setters.push(quote! {
-            fn #fn_ident(&mut self, value: u64) {
+            fn #fn_ident(&mut self, value: #uint_type) {
                 #(#offset_total_stmts)*
                 let mut size = <#ty as Specifier>::BITS;
                 let byte_size = <Byte as Specifier>::BITS;
@@ -164,18 +164,20 @@ fn get_setters(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
                 let offset_inner = offset % byte_size as u16;
                 let size_reverse = byte_size - offset_inner as u8;
 
-                let mut offset_total = 0u64;
+                let mut offset_total = 0;
                 if size <= size_reverse {
                     self.set_data(index as usize, offset_inner as u8, size, value as u8);
                     return;
                 }
 
-                offset_total += size_reverse as u64;
+                self.set_data(index as usize, offset_inner as u8, size_reverse, value as u8);
+                size -= size_reverse;
+                offset_total += size_reverse as #uint_type;
                 while(size >= byte_size) {
                     let index = (offset + offset_total as u16) / byte_size as u16;
                     self.set_data(index as usize, 0, byte_size, (value >> offset_total) as u8);
                     size -= byte_size;
-                    offset_total += byte_size as u64;
+                    offset_total += byte_size as #uint_type;
                 }
 
                 if size > 0 {
@@ -210,39 +212,45 @@ fn get_ident(field: &Field) -> syn::Result<Ident> {
 }
 
 fn get_check_fn(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
-    let mut associate_type_alias = vec![];
-    let mut mod8_associate_assigns = vec![];
-    let mut total_mod8_add_units = vec![];
+    let mut associate_types = vec![];
     for field in fields {
-        let ident = get_ident(field)?;
         let ty = &field.ty;
-        let ident_literal = ident.to_string();
-        let ident_literal_capitalized =
-            ident_literal[0..1].to_ascii_uppercase() + &ident_literal[1..];
-        let associate_type_literal = format!("{}Mod8", ident_literal_capitalized);
-        let associate_type = Ident::new(&associate_type_literal, ident.span());
-        associate_type_alias.push(quote! {
-            type #associate_type = <#ty as Mod8Specifier>::Mod8Type;
+        associate_types.push(quote! {
+            <#ty as Mod8Specifier>::Mod8Type
         });
-
-        let associate_var_literal = format!("{}_mod_8", ident_literal);
-        let associate_var = Ident::new(&associate_var_literal, ident.span());
-        mod8_associate_assigns.push(quote! {
-            let #associate_var = #associate_type {};
-        });
-
-        total_mod8_add_units.push(associate_var);
     }
+
+    let mut sum = match associate_types.pop() {
+        Some(associate_type) => associate_type,
+        None => {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "fields should not be empty",
+            ))
+        }
+    };
+
+    while let Some(rhs) = associate_types.pop() {
+        sum = mod8_type_add(sum, rhs);
+    }
+
     let check_fn = quote! {
         #[allow(unused)]
         fn _unused_check() {
-            fn assert<N: TotalSizeIsMultipleOfEightBits>(_n: N) {}
-            #(#associate_type_alias)*
-            #(#mod8_associate_assigns)*
-            assert(#(#total_mod8_add_units)+*);
+            fn assert<N: TotalSizeIsMultipleOfEightBits>() {}
+            assert::<#sum>();
         }
     };
     Ok(check_fn)
+}
+
+fn mod8_type_add(
+    lhs: proc_macro2::TokenStream,
+    rhs: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    quote! {
+        <#lhs as std::ops::Add<#rhs>>::Output
+    }
 }
 
 #[proc_macro]
@@ -251,6 +259,12 @@ pub fn generate_bits(_: TokenStream) -> TokenStream {
     for i in 0..63 {
         let ident = Ident::new(&format!("B{}", i.to_string()), Span::call_site());
         let mod8_type = get_mod8_ident(i % 8, None);
+        let uint_size = match get_uint_size(i) {
+            Ok(uint_size) => uint_size,
+            Err(e) => return e.to_compile_error().into(),
+        };
+        let uint_type_literal = format!("u{}", uint_size);
+        let uint_type = Ident::new(&uint_type_literal, Span::call_site());
         let iu8 = i as u8;
 
         bits.push(quote! {
@@ -261,12 +275,27 @@ pub fn generate_bits(_: TokenStream) -> TokenStream {
             impl Mod8Specifier for #ident {
                 type Mod8Type = #mod8_type;
             }
+            impl UintSpecifier for #ident {
+                type Uint = #uint_type;
+            }
         });
     }
     quote! {
         #(#bits)*
     }
     .into()
+}
+
+fn get_uint_size(n: usize) -> syn::Result<usize> {
+    let result = match n {
+        0..9 => 8,
+        9..17 => 16,
+        17..33 => 32,
+        33..65 => 64,
+        _ => return Err(syn::Error::new(Span::call_site(), "out of range of u64")),
+    };
+
+    Ok(result)
 }
 
 const PREFIX_MAP: [&str; 8] = [
@@ -309,7 +338,7 @@ fn get_add_trait_impls() -> proc_macro2::TokenStream {
                 impl std::ops::Add<#ident_j> for #ident_i {
                     type Output = #ident_output;
                     fn add(self, _rhs: #ident_j) -> Self::Output {
-                        Self::Output {}
+                        #ident_output
                     }
                 }
             });

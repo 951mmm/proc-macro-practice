@@ -18,11 +18,18 @@ pub trait Specifier {
     const BITS: u8;
 }
 
+pub trait UintSpecifier {
+    type Uint;
+}
+
 generate_bits! {}
 
 pub struct Byte;
 impl Specifier for Byte {
     const BITS: u8 = 8;
+}
+impl Mod8Specifier for Byte {
+    type Mod8Type = ZeroMod8;
 }
 
 #[cfg(test)]
