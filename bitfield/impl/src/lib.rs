@@ -1,8 +1,11 @@
+use std::fmt::format;
+
 use proc_macro::TokenStream;
-use quote::quote;
+use proc_macro2::Span;
+use quote::{quote, quote_spanned, ToTokens};
 use syn::{
     parse_macro_input, parse_quote, spanned::Spanned, Attribute, Expr, Field, Fields, FieldsNamed,
-    Ident, Item, ItemStruct, Type, TypePath,
+    Ident, Item, ItemStruct, LitInt, Type, TypePath,
 };
 
 #[proc_macro_attribute]
@@ -48,23 +51,33 @@ fn resolve_attr(attrs: &mut Vec<Attribute>) {
     attrs.push(parse_quote! {#[repr(C)]});
 }
 
-const BYTE_LEN: u16 = 8;
-
 fn resolve_fields(fields: &mut Fields) -> syn::Result<proc_macro2::TokenStream> {
     let getters = get_getters(fields)?;
     let setters = get_setters(fields)?;
+    let check_fn = get_check_fn(fields)?;
 
-    let mut size_sum = 0;
-    for field in fields.iter_mut() {
-        let size = get_size(&field.ty)?;
-        size_sum += size as u16;
+    let mut total_size_stmts = vec![];
+    for field in fields.iter() {
+        let ty = &field.ty;
+        total_size_stmts.push(quote! {
+            <#ty as Specifier>::BITS
+        });
     }
 
-    let byte_sum = (size_sum / BYTE_LEN) as usize;
-    let init_fn = get_init_fn(byte_sum);
+    let array_len = quote! {
+        ((#(#total_size_stmts)+*) / <Byte as Specifier>::BITS) as usize
+    };
+
+    let init_fn = quote! {
+        pub fn new() -> Self {
+            Self {
+                data: [0; #array_len]
+            }
+        }
+    };
     let new_fields: FieldsNamed = parse_quote! {
         {
-            data: [u8; #byte_sum],
+            data: [u8; #array_len],
         }
     };
     *fields = new_fields.into();
@@ -73,25 +86,8 @@ fn resolve_fields(fields: &mut Fields) -> syn::Result<proc_macro2::TokenStream> 
         #init_fn
         #getters
         #setters
+        #check_fn
     })
-}
-
-fn get_init_fn(size_sum: usize) -> proc_macro2::TokenStream {
-    let arr = vec![0u8];
-    let arr = arr.repeat(size_sum);
-    quote! {
-        pub fn new() -> Self {
-            Self {
-                data: [#(#arr,)*]
-            }
-        }
-    }
-}
-
-macro_rules! mask {
-    ($len:expr) => {
-        ((1_u16 << $len) - 1)
-    };
 }
 
 fn get_getters(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
@@ -213,23 +209,122 @@ fn get_ident(field: &Field) -> syn::Result<Ident> {
     }
 }
 
-fn get_size(ty: &Type) -> syn::Result<u8> {
-    if let Type::Path(TypePath { path, .. }) = &ty {
-        let seg_last = path.segments.last().unwrap();
-        let ident_string = seg_last.ident.to_string();
-        let size_lit = ident_string.split("B").collect::<Vec<_>>()[1];
-        let size = match size_lit.parse::<u8>() {
-            Ok(size) => size,
-            Err(_) => {
-                return Err(syn::Error::new(
-                    path.span(),
-                    "ty shound be 'B1, B2, ...B~N'",
-                ))
-            }
-        };
+fn get_check_fn(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
+    let mut associate_type_alias = vec![];
+    let mut mod8_associate_assigns = vec![];
+    let mut total_mod8_add_units = vec![];
+    for field in fields {
+        let ident = get_ident(field)?;
+        let ty = &field.ty;
+        let ident_literal = ident.to_string();
+        let ident_literal_capitalized =
+            ident_literal[0..1].to_ascii_uppercase() + &ident_literal[1..];
+        let associate_type_literal = format!("{}Mod8", ident_literal_capitalized);
+        let associate_type = Ident::new(&associate_type_literal, ident.span());
+        associate_type_alias.push(quote! {
+            type #associate_type = <#ty as Mod8Specifier>::Mod8Type;
+        });
 
-        Ok(size)
-    } else {
-        Err(syn::Error::new(ty.span(), "field type should be Path-Like"))
+        let associate_var_literal = format!("{}_mod_8", ident_literal);
+        let associate_var = Ident::new(&associate_var_literal, ident.span());
+        mod8_associate_assigns.push(quote! {
+            let #associate_var = #associate_type {};
+        });
+
+        total_mod8_add_units.push(associate_var);
+    }
+    let check_fn = quote! {
+        #[allow(unused)]
+        fn _unused_check() {
+            fn assert<N: TotalSizeIsMultipleOfEightBits>(_n: N) {}
+            #(#associate_type_alias)*
+            #(#mod8_associate_assigns)*
+            assert(#(#total_mod8_add_units)+*);
+        }
+    };
+    Ok(check_fn)
+}
+
+#[proc_macro]
+pub fn generate_bits(_: TokenStream) -> TokenStream {
+    let mut bits = vec![];
+    for i in 0..63 {
+        let ident = Ident::new(&format!("B{}", i.to_string()), Span::call_site());
+        let mod8_type = get_mod8_ident(i % 8, None);
+        let iu8 = i as u8;
+
+        bits.push(quote! {
+            pub struct #ident;
+            impl Specifier for #ident {
+                const BITS: u8 = #iu8;
+            }
+            impl Mod8Specifier for #ident {
+                type Mod8Type = #mod8_type;
+            }
+        });
+    }
+    quote! {
+        #(#bits)*
+    }
+    .into()
+}
+
+const PREFIX_MAP: [&str; 8] = [
+    "Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven",
+];
+
+#[proc_macro]
+pub fn generate_mod8_types(_: TokenStream) -> TokenStream {
+    let mut mod8_types = vec![];
+    for i in 0..8 {
+        let ident = get_mod8_ident(i, None);
+        mod8_types.push(quote! {
+            pub struct #ident;
+        });
+
+        if i == 0 {
+            mod8_types.push(quote! {
+                impl TotalSizeIsMultipleOfEightBits for #ident {}
+            });
+        }
+    }
+
+    let add_trait_impls = get_add_trait_impls();
+
+    quote! {
+        #(#mod8_types)*
+        #add_trait_impls
+    }
+    .into()
+}
+
+fn get_add_trait_impls() -> proc_macro2::TokenStream {
+    let mut add_trait_impls = vec![];
+    for i in 0..8 {
+        for j in 0..8 {
+            let ident_i = get_mod8_ident(i, None);
+            let ident_j = get_mod8_ident(j, None);
+            let ident_output = get_mod8_ident((i + j) % 8, None);
+            add_trait_impls.push(quote! {
+                impl std::ops::Add<#ident_j> for #ident_i {
+                    type Output = #ident_output;
+                    fn add(self, _rhs: #ident_j) -> Self::Output {
+                        Self::Output {}
+                    }
+                }
+            });
+        }
+    }
+
+    quote! {
+        #(#add_trait_impls)*
+    }
+}
+
+fn get_mod8_ident(n: usize, span: Option<Span>) -> Ident {
+    let ident_literal = format!("{}Mod8", PREFIX_MAP[n]);
+    match span {
+        Some(span) => Ident::new(&ident_literal, span),
+        None => Ident::new(&ident_literal, Span::call_site()),
     }
 }

@@ -10,29 +10,27 @@
 //
 // From the perspective of a user of this crate, they get all the necessary APIs
 // (macro, trait, struct) through the one bitfield crate.
-pub use bitfield_impl::bitfield;
-use seq::seq;
+pub use bitfield_impl::*;
+
+mod checks;
+pub use checks::*;
 pub trait Specifier {
     const BITS: u8;
 }
 
-seq!(N in 1..=64 {
-    pub struct B~N;
-    impl Specifier for B~N {
-        const BITS: u8 = N;
-    }
-});
+generate_bits! {}
 
 pub struct Byte;
 impl Specifier for Byte {
     const BITS: u8 = 8;
 }
+
 #[cfg(test)]
 mod tests {
-    use crate::{Specifier, B64};
+    use crate::{Specifier, B61};
 
     #[test]
     fn test_specifier() {
-        assert_eq!(<B64 as Specifier>::BITS, 64);
+        assert_eq!(<B61 as Specifier>::BITS, 61);
     }
 }
