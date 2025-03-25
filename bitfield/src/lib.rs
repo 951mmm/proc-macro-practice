@@ -35,12 +35,6 @@ impl Specifier for Byte {
     type Mod8Type = ZeroMod8;
 }
 
-pub const DISCRIMINANTS_LEN: usize = 2usize.pow(8);
-pub trait DiscriminantsSpecifier {
-    type Uint;
-    const DISCRIMINANTS: [Self::Uint; DISCRIMINANTS_LEN];
-}
-
 pub trait BitfieldSpecifier {
     type Bitfield: Sized + Specifier;
     type This;

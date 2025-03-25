@@ -1,12 +1,12 @@
 
-use std::{collections::VecDeque, vec};
+use std::{iter, vec};
 
-use proc_macro::TokenStream;
+use proc_macro::{ TokenStream};
 use proc_macro2::{Literal, Span};
 use quote::quote;
 use syn::{
     parse_macro_input, parse_quote, punctuated::Punctuated, spanned::Spanned, Attribute, Data,
-    DataEnum, DeriveInput, Expr, ExprLit, Field, Fields, FieldsNamed, Ident, Item, ItemStruct, Lit, Token, Type, Variant,
+    DataEnum, DeriveInput, Field, Fields, FieldsNamed, Ident, Item, ItemStruct, Token, Type, Variant,
 };
 
 #[proc_macro_attribute]
@@ -406,15 +406,40 @@ fn expand_bitfield_specifier(ast: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 .map(|variant| variant.ident.clone())
                 .collect::<Vec<_>>();
 
-            let discriminants = (0..variants.len()).into_iter().map(|index| {
-                quote! {
-                    <Self as DiscriminantsSpecifier>::DISCRIMINANTS[#index]
+            let flag = variants.iter().find(|variant| variant.discriminant.is_some());
+            let uint_type = quote! {
+                <<Self as BitfieldSpecifier>::Bitfield as Specifier>::Uint
+            };
+            let mut discriminants = vec![];
+            if flag.is_none() {
+                for i in 0..variants.len() {
+                    let i = Literal::usize_unsuffixed(i);
+                    discriminants.push(quote! {
+                        #i
+                    });
                 }
-            }).collect::<Vec<_>>();
+            }
+            else {
+                let mut last_expr = None;
+                let mut cnt = 0;
+                for variant in variants {
+                    if let Some((_, ref expr)) = variant.discriminant {
+                        cnt = 0;
+                        last_expr = Some(expr);
+                    }
+                    
+                    let cnt_inner = Literal::i32_unsuffixed(cnt);
+                    discriminants.push(quote! {
+                        #last_expr + #cnt_inner
+                    });
+                    cnt += 1;
+                    
+                }
+            }
 
             let mut from_bitfield_stmts = discriminants.iter().zip(idents.iter()).map(|(discriminant, ident)| {
                 quote! {
-                    if bit_unit == #discriminant {
+                    if bit_unit == (#discriminant) as #uint_type {
                         return std::result::Result::Ok(Self::#ident);
                     }
                 }
@@ -431,12 +456,11 @@ fn expand_bitfield_specifier(ast: &DeriveInput) -> syn::Result<proc_macro2::Toke
             let fn_to_bitfield = quote! {
                 fn to_bitfield(this: &Self::This) -> <Self::Bitfield as Specifier>::Uint {
                     match this {
-                        #(Self::This::#idents => #discriminants,)*
+                        #(Self::This::#idents => (#discriminants) as #uint_type,)*
                     }
                 }
             };
-            let discriminants_impl = get_discriminants_impl(variants);
-            let uint_type = quote! {<<Self as BitfieldSpecifier>::Bitfield as Specifier>::Uint};
+
             Ok(quote! {
                 #[automatically_derived]
                 impl BitfieldSpecifier for #enum_ident {
@@ -446,10 +470,6 @@ fn expand_bitfield_specifier(ast: &DeriveInput) -> syn::Result<proc_macro2::Toke
                     #fn_from_bitfield
                     #fn_to_bitfield
                 } 
-                impl DiscriminantsSpecifier for #enum_ident {
-                    type Uint = #uint_type;
-                    #discriminants_impl
-                }
             })
         }
         _ => Err(syn::Error::new(ast.span(), "expected enum")),
@@ -459,51 +479,3 @@ fn expand_bitfield_specifier(ast: &DeriveInput) -> syn::Result<proc_macro2::Toke
 fn get_bitfield_type_suffix(len: usize) -> u8 {
     (len as f32).log2() as u8
 }
-
-fn get_discriminants_impl(variants: &Punctuated<Variant, Token![,]>) -> proc_macro2::TokenStream {
-    let mut init_stmts = vec![];
-
-    for i in 0..variants.len() {
-        if let Some((_, ref expr)) = variants[i].discriminant {
-            init_stmts.push(quote! {
-                discriminants[#i] = #expr as Self::Uint;
-                vis_index[#i] = true;
-                vis_map[#expr as usize] = true;
-            });
-        }
-    }
-
-    let mut assign_stmts = vec![];
-    for i in 0..variants.len() {
-        assign_stmts.push(quote! {
-            if !vis_index[#i] {
-                while vis_map[avialiable_discriminant as usize] {
-                    avialiable_discriminant += 1;
-                }
-                discriminants[#i] = avialiable_discriminant; 
-                vis_map[avialiable_discriminant as usize] = true;
-            }
-        });
-    }
-    quote! {
-        const DISCRIMINANTS: [Self::Uint; DISCRIMINANTS_LEN] = {
-            let mut vis_map = [false; DISCRIMINANTS_LEN];
-            let mut vis_index = [false; DISCRIMINANTS_LEN];
-            let mut discriminants = [0; DISCRIMINANTS_LEN];
-            #(#init_stmts)*
-            let mut avialiable_discriminant = 0;
-            #(#assign_stmts)*
-            discriminants
-        };
-    }
-}
-
-// fn get_discriminant_num(expr: &Expr) -> syn::Result<usize> {
-//     if let Expr::Lit(ExprLit { lit, .. }) = expr {
-//         if let Lit::Int(lit_int) = lit {
-//             // TODO error parse
-//             return Ok(lit_int.base10_digits().parse().unwrap());
-//         }
-//     }
-//     Err(syn::Error::new(expr.span(), "expected int discriminant"))
-// }
