@@ -18,6 +18,8 @@ mod checks;
 pub use checks::*;
 pub trait Specifier {
     const BITS: u8;
+    type Uint;
+    type Mod8Type;
 }
 
 pub trait UintSpecifier {
@@ -29,38 +31,36 @@ generate_bits! {}
 pub struct Byte;
 impl Specifier for Byte {
     const BITS: u8 = 8;
-}
-impl Mod8Specifier for Byte {
+    type Uint = u8;
     type Mod8Type = ZeroMod8;
 }
 
-impl UintSpecifier for Byte {
-    type Uint = u8;
+pub const DISCRIMINANTS_LEN: usize = 2usize.pow(8);
+pub trait DiscriminantsSpecifier {
+    type Uint;
+    const DISCRIMINANTS: [Self::Uint; DISCRIMINANTS_LEN];
 }
 
 pub trait BitfieldSpecifier {
-    type Bitfield: Sized + UintSpecifier + Mod8Specifier + Specifier;
+    type Bitfield: Sized + Specifier;
     type This;
     type FromBitfieldReturn;
-    fn from_bitfield(bit_unit: <Self::Bitfield as UintSpecifier>::Uint)
-        -> Self::FromBitfieldReturn;
-    fn to_bitfield(this: &Self::This) -> <Self::Bitfield as UintSpecifier>::Uint;
+    fn from_bitfield(bit_unit: <Self::Bitfield as Specifier>::Uint) -> Self::FromBitfieldReturn;
+    fn to_bitfield(this: &Self::This) -> <Self::Bitfield as Specifier>::Uint;
 }
 
 impl BitfieldSpecifier for bool {
     type Bitfield = B1;
     type This = Self;
     type FromBitfieldReturn = Result<Self::This>;
-    fn from_bitfield(
-        bit_unit: <Self::Bitfield as UintSpecifier>::Uint,
-    ) -> Self::FromBitfieldReturn {
+    fn from_bitfield(bit_unit: <Self::Bitfield as Specifier>::Uint) -> Self::FromBitfieldReturn {
         match bit_unit {
             0 => Ok(false),
             1 => Ok(true),
-            _ => Err(Unrecognized::new(bit_unit as u64)),
+            _ => Err(Unrecognized::new(u64::from(bit_unit))),
         }
     }
-    fn to_bitfield(this: &Self::This) -> <Self::Bitfield as UintSpecifier>::Uint {
+    fn to_bitfield(this: &Self::This) -> <Self::Bitfield as Specifier>::Uint {
         match this {
             false => 0,
             true => 1,
@@ -73,7 +73,7 @@ pub struct Unrecognized(u64);
 
 impl Display for Unrecognized {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("unrecognized value: {}", self.raw_value()))
+        f.write_fmt(format_args!("unrecognized value: {}\n", self.raw_value()))
     }
 }
 
@@ -109,15 +109,15 @@ mod tests {
             type This = Self;
             type FromBitfieldReturn = Result<Self::This>;
             fn from_bitfield(
-                bit_unit: <Self::Bitfield as UintSpecifier>::Uint,
+                bit_unit: <Self::Bitfield as Specifier>::Uint,
             ) -> Self::FromBitfieldReturn {
                 match bit_unit {
                     0 => Ok(Self::A),
                     1 => Ok(Self::B),
-                    _ => Err(Unrecognized(0 as u64)),
+                    _ => Err(Unrecognized(bit_unit)),
                 }
             }
-            fn to_bitfield(this: &Self::This) -> <Self::Bitfield as UintSpecifier>::Uint {
+            fn to_bitfield(this: &Self::This) -> <Self::Bitfield as Specifier>::Uint {
                 match this {
                     Self::A => 0,
                     Self::B => 1,

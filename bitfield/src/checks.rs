@@ -1,9 +1,6 @@
 use bitfield_impl::generate_mod8_types;
 
 pub trait TotalSizeIsMultipleOfEightBits {}
-pub trait Mod8Specifier {
-    type Mod8Type;
-}
 
 generate_mod8_types! {}
 
