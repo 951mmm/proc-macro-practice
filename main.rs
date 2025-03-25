@@ -1,47 +1,91 @@
-// For getters and setters, we would like for the signature to be in terms of
-// the narrowest unsigned integer type that can hold the right number of bits.
-// That means the accessors for B1 through B8 would use u8, B9 through B16 would
-// use u16 etc.
+// For some bitfield members, working with them as enums will make more sense to
+// the user than working with them as integers. We will require enums that have
+// a power-of-two number of variants so that they exhaustively cover a fixed
+// range of bits.
+//
+//     // Works like B3, but getter and setter signatures will use
+//     // the enum instead of u8.
+//     #[derive(BitfieldSpecifier)]
+//     enum DeliveryMode {
+//         Fixed = 0b000,
+//         Lowest = 0b001,
+//         SMI = 0b010,
+//         RemoteRead = 0b011,
+//         NMI = 0b100,
+//         Init = 0b101,
+//         Startup = 0b110,
+//         External = 0b111,
+//     }
+//
+// For this test case it is okay to require that every enum variant has an
+// explicit discriminant that is an integer literal. We will relax this
+// requirement in a later test case.
+//
+// Optionally if you are interested, come up with a way to support enums with a
+// number of variants that is not a power of two, but this is not necessary for
+// the test suite. Maybe there could be a #[bits = N] attribute that determines
+// the bit width of the specifier, and the getter (only for such enums) would
+// return Result<T, Unrecognized> with the raw value accessible through the
+// error type as u64:
+//
+//     #[derive(BitfieldSpecifier)]
+//     #[bits = 4]
+//     enum SmallPrime {
+//         Two = 0b0010,
+//         Three = 0b0011,
+//         Five = 0b0101,
+//         Seven = 0b0111,
+//         Eleven = 0b1011,
+//         Thirteen = 0b1101,
+//     }
+//
+//     ...
+//     let mut bitfield = MyBitfield::new();
+//     assert_eq!(0, bitfield.small_prime().unwrap_err().raw_value());
+//
+//     bitfield.set_small_prime(SmallPrime::Seven);
+//     let p = bitfield.small_prime().unwrap_or(SmallPrime::Two);
 
 use bitfield::*;
-use std::mem::size_of_val;
-
-type A = B1;
-type B = B3;
-type C = B4;
-type D = B24;
 
 #[bitfield]
-pub struct MyFourBytes {
-    a: A,
-    b: B,
-    c: C,
-    d: D,
+pub struct RedirectionTableEntry {
+    acknowledged: bool,
+    trigger_mode: TriggerMode,
+    delivery_mode: DeliveryMode,
+    reserved: B3,
+}
+
+#[derive(BitfieldSpecifier, Debug, PartialEq)]
+pub enum TriggerMode {
+    Edge = 0,
+    Level = 1,
+}
+
+#[derive(BitfieldSpecifier, Debug, PartialEq)]
+pub enum DeliveryMode {
+    Fixed = 0b000,
+    Lowest = 0b001,
+    SMI = 0b010,
+    RemoteRead = 0b011,
+    NMI = 0b100,
+    Init = 0b101,
+    Startup = 0b110,
+    External = 0b111,
 }
 
 fn main() {
-    let mut x = MyFourBytes::new();
+    assert_eq!(std::mem::size_of::<RedirectionTableEntry>(), 1);
 
-    // I am testing the signatures in this roundabout way to avoid making it
-    // possible to pass this test with a generic signature that is inconvenient
-    // for callers, such as `fn get_a<T: From<u64>>(&self) -> T`.
+    // Initialized to all 0 bits.
+    let mut entry = RedirectionTableEntry::new();
+    assert_eq!(entry.get_acknowledged().unwrap(), false);
+    assert_eq!(entry.get_trigger_mode().unwrap(), TriggerMode::Edge);
+    assert_eq!(entry.get_delivery_mode().unwrap(), DeliveryMode::Fixed);
 
-    let a = 1;
-    x.set_a(a); // expect fn(&mut MyFourBytes, u8)
-    let b = 1;
-    x.set_b(b);
-    let c = 1;
-    x.set_c(c);
-    let d = 1;
-    x.set_d(d); // expect fn(&mut MyFourBytes, u32)
-
-    assert_eq!(size_of_val(&a), 1);
-    assert_eq!(size_of_val(&b), 1);
-    assert_eq!(size_of_val(&c), 1);
-    assert_eq!(size_of_val(&d), 4);
-
-    assert_eq!(size_of_val(&x.get_a()), 1); // expect fn(&MyFourBytes) -> u8
-    assert_eq!(size_of_val(&x.get_b()), 1);
-    assert_eq!(size_of_val(&x.get_c()), 1);
-    assert_eq!(size_of_val(&x.get_d()), 4); // expect fn(&MyFourBytes) -> u32
+    entry.set_acknowledged(true);
+    entry.set_delivery_mode(DeliveryMode::SMI);
+    assert_eq!(entry.get_acknowledged().unwrap(), true);
+    assert_eq!(entry.get_trigger_mode().unwrap(), TriggerMode::Edge);
+    assert_eq!(entry.get_delivery_mode().unwrap(), DeliveryMode::SMI);
 }

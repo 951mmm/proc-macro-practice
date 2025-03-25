@@ -1,9 +1,12 @@
+use std::{collections::HashMap, num::ParseIntError};
+
 use proc_macro::TokenStream;
-use proc_macro2::Span;
-use quote::{quote, quote_spanned, ToTokens};
+use proc_macro2::{Literal, Span};
+use quote::{quote, ToTokens};
 use syn::{
-    parse_macro_input, parse_quote, spanned::Spanned, Attribute, Expr, Field, Fields, FieldsNamed,
-    Ident, Item, ItemStruct, LitInt, Type, TypePath,
+    parse_macro_input, parse_quote, punctuated::Punctuated, spanned::Spanned, Attribute, Data,
+    DataEnum, DeriveInput, Expr, ExprLit, Field, Fields, FieldsNamed, Ident, Item, ItemStruct, Lit,
+    LitInt, Token, Type, TypePath, Variant,
 };
 
 #[proc_macro_attribute]
@@ -56,9 +59,9 @@ fn resolve_fields(fields: &mut Fields) -> syn::Result<proc_macro2::TokenStream> 
 
     let mut total_size_stmts = vec![];
     for field in fields.iter() {
-        let ty = &field.ty;
+        let bitfield_ty = get_bitfield_ty(&field.ty);
         total_size_stmts.push(quote! {
-            <#ty as Specifier>::BITS
+            <#bitfield_ty as Specifier>::BITS
         });
     }
 
@@ -95,12 +98,13 @@ fn get_getters(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
         let ident = get_ident(field)?;
         let fn_ident = Ident::new(&format!("get_{}", ident.to_string()), ident.span());
         let ty = &field.ty;
-        let uint_type = quote! {<#ty as UintSpecifier>::Uint};
+        let bitfield_ty = get_bitfield_ty(&ty);
+        let uint_type = quote! {<#bitfield_ty as UintSpecifier>::Uint};
 
         getters.push(quote! {
-            fn #fn_ident(&self) -> #uint_type {
+            fn #fn_ident(&self) -> <#ty as BitfieldSpecifier>::FromBitfieldReturn {
                 #(#offset_total_stmts)*;
-                let mut size = <#ty as Specifier>::BITS;
+                let mut size = <#bitfield_ty as Specifier>::BITS;
                 let byte_size = <Byte as Specifier>::BITS;
                 let index = offset / byte_size as u16;
                 let offset_inner = offset % byte_size as u16;
@@ -109,7 +113,8 @@ fn get_getters(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
                 let mut offset_total = 0;
                 let size_reverse = byte_size - offset_inner as u8;
                 if size <= size_reverse {
-                    return self.get_data(index as usize, offset_inner as u8, size) as #uint_type;
+                    let result = self.get_data(index as usize, offset_inner as u8, size) as #uint_type;
+                    return <#ty as BitfieldSpecifier>::from_bitfield(result);
                 }
 
                 result += self.get_data(index as usize, offset_inner as u8, size_reverse) as #uint_type;
@@ -128,12 +133,12 @@ fn get_getters(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
                     result += (self.get_data(index as usize, 0, size) as #uint_type) << offset_total;
                 }
 
-                 result
+                 <#ty as BitfieldSpecifier>::from_bitfield(result)
             }
         });
 
         offset_total_stmts.push(quote! {
-            offset += <#ty as Specifier>::BITS as u16;
+            offset += <#bitfield_ty as Specifier>::BITS as u16;
         });
     }
     Ok(quote! {
@@ -153,12 +158,14 @@ fn get_setters(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
         let ident = get_ident(field)?;
         let fn_ident = Ident::new(&format!("set_{}", ident.to_string()), ident.span());
         let ty = &field.ty;
-        let uint_type = quote! {<#ty as UintSpecifier>::Uint};
+        let bitfield_ty = get_bitfield_ty(&field.ty);
+        let this_ty = get_this_ty(&field.ty);
+        let uint_type = quote! {<#bitfield_ty as UintSpecifier>::Uint};
 
         setters.push(quote! {
-            fn #fn_ident(&mut self, value: #uint_type) {
+            fn #fn_ident(&mut self, value: #this_ty) {
                 #(#offset_total_stmts)*
-                let mut size = <#ty as Specifier>::BITS;
+                let mut size = <#bitfield_ty as Specifier>::BITS;
                 let byte_size = <Byte as Specifier>::BITS;
                 let index = offset / byte_size as u16;
                 let offset_inner = offset % byte_size as u16;
@@ -166,28 +173,28 @@ fn get_setters(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
 
                 let mut offset_total = 0;
                 if size <= size_reverse {
-                    self.set_data(index as usize, offset_inner as u8, size, value as u8);
+                    self.set_data(index as usize, offset_inner as u8, size, <#ty as BitfieldSpecifier>::to_bitfield(&value) as u8);
                     return;
                 }
 
-                self.set_data(index as usize, offset_inner as u8, size_reverse, value as u8);
+                self.set_data(index as usize, offset_inner as u8, size_reverse, <#ty as BitfieldSpecifier>::to_bitfield(&value) as u8);
                 size -= size_reverse;
                 offset_total += size_reverse as #uint_type;
                 while(size >= byte_size) {
                     let index = (offset + offset_total as u16) / byte_size as u16;
-                    self.set_data(index as usize, 0, byte_size, (value >> offset_total) as u8);
+                    self.set_data(index as usize, 0, byte_size, (<#ty as BitfieldSpecifier>::to_bitfield(&value) >> offset_total) as u8);
                     size -= byte_size;
                     offset_total += byte_size as #uint_type;
                 }
 
                 if size > 0 {
                     let index = (offset + offset_total as u16) / byte_size as u16;
-                    self.set_data(index as usize, 0, size, (value >> offset_total) as u8);
+                    self.set_data(index as usize, 0, size, ((<#ty as BitfieldSpecifier>::to_bitfield(&value)) >> offset_total) as u8);
                 }
             }
         });
         offset_total_stmts.push(quote! {
-            offset += <#ty as Specifier>::BITS as u16;
+            offset += <#bitfield_ty as Specifier>::BITS as u16;
         });
     }
     Ok(quote! {
@@ -204,6 +211,12 @@ fn get_setters(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
     })
 }
 
+fn get_this_ty(ty: &Type) -> proc_macro2::TokenStream {
+    quote! {
+        <#ty as BitfieldSpecifier>::This
+    }
+}
+
 fn get_ident(field: &Field) -> syn::Result<Ident> {
     match field.ident.clone() {
         Some(ident) => Ok(ident),
@@ -214,9 +227,9 @@ fn get_ident(field: &Field) -> syn::Result<Ident> {
 fn get_check_fn(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
     let mut associate_types = vec![];
     for field in fields {
-        let ty = &field.ty;
+        let bitfield_ty = get_bitfield_ty(&field.ty);
         associate_types.push(quote! {
-            <#ty as Mod8Specifier>::Mod8Type
+            <#bitfield_ty as Mod8Specifier>::Mod8Type
         });
     }
 
@@ -253,6 +266,12 @@ fn mod8_type_add(
     }
 }
 
+fn get_bitfield_ty(ty: &Type) -> proc_macro2::TokenStream {
+    quote! {
+        <#ty as BitfieldSpecifier>::Bitfield
+    }
+}
+
 #[proc_macro]
 pub fn generate_bits(_: TokenStream) -> TokenStream {
     let mut bits = vec![];
@@ -277,6 +296,17 @@ pub fn generate_bits(_: TokenStream) -> TokenStream {
             }
             impl UintSpecifier for #ident {
                 type Uint = #uint_type;
+            }
+            impl BitfieldSpecifier for #ident {
+                type Bitfield = #ident;
+                type This = <Self::Bitfield as UintSpecifier>::Uint;
+                type FromBitfieldReturn = Self::This;   
+                fn from_bitfield(bit_unit: <Self::Bitfield as UintSpecifier>::Uint) -> Self::FromBitfieldReturn {
+                    bit_unit
+                }
+                fn to_bitfield(this: &Self::This) -> <Self::Bitfield as UintSpecifier>::Uint {
+                    *this
+                }
             }
         });
     }
@@ -356,4 +386,106 @@ fn get_mod8_ident(n: usize, span: Option<Span>) -> Ident {
         Some(span) => Ident::new(&ident_literal, span),
         None => Ident::new(&ident_literal, Span::call_site()),
     }
+}
+
+#[proc_macro_derive(BitfieldSpecifier)]
+pub fn derive_bitfield_specifier(input: TokenStream) -> TokenStream {
+    let ast = parse_macro_input!(input as DeriveInput);
+    match expand_bitfield_specifier(&ast) {
+        Ok(token_stream) => token_stream,
+        Err(e) => e.to_compile_error(),
+    }
+    .into()
+}
+
+fn expand_bitfield_specifier(ast: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+    let enum_ident = &ast.ident;
+    match &ast.data {
+        Data::Enum(DataEnum { variants, .. }) => {
+            let bitfield_type_literal = format!("B{}", get_bitfield_type_suffix(variants.len()));
+            let bitfield_type = Ident::new(&bitfield_type_literal, Span::call_site());
+            let discriminants = get_discriminants(variants)?;
+            let idents = variants
+                .iter()
+                .map(|variant| variant.ident.clone())
+                .collect::<Vec<_>>();
+            let fn_from_bitfield = quote! {
+                fn from_bitfield(bit_unit: <Self::Bitfield as UintSpecifier>::Uint) -> Self::FromBitfieldReturn {
+                    match bit_unit {
+                        #(#discriminants => std::result::Result::Ok(Self::#idents),)*
+                        _ => std::result::Result::Err(Unrecognized::new(bit_unit as u64)),
+                    }
+                }
+            };
+            let fn_to_bitfield = quote! {
+                fn to_bitfield(this: &Self::This) -> <Self::Bitfield as UintSpecifier>::Uint {
+                    match this {
+                        #(Self::This::#idents => #discriminants,)*
+                    }
+                }
+            };
+            Ok(quote! {
+                #[automatically_derived]
+                impl BitfieldSpecifier for #enum_ident {
+                    type Bitfield = #bitfield_type;
+                    type This = Self;
+                    type FromBitfieldReturn = Result<Self::This>;
+                    #fn_from_bitfield
+                    #fn_to_bitfield
+                }
+            }
+            .into())
+        }
+        _ => Err(syn::Error::new(ast.span(), "expected enum")),
+    }
+}
+
+fn get_bitfield_type_suffix(len: usize) -> u8 {
+    (len as f32).log2() as u8
+}
+
+fn get_discriminants(variants: &Punctuated<Variant, Token![,]>) -> syn::Result<Vec<Literal>> {
+    const VIS_MAP_LEN: usize = 2usize.pow(8);
+    let mut vis_map = [false; VIS_MAP_LEN];
+    let mut index_map = [false; VIS_MAP_LEN];
+    let mut int_lits = vec![0; variants.len()];
+
+    for i in 0..variants.len() {
+        match variants[i].discriminant {
+            Some((_, ref expr)) => {
+                let int_lit = get_discriminant_num(expr)?;
+                vis_map[int_lit] = true;
+                index_map[i] = true;
+                int_lits[i] = int_lit;
+            }
+            None => {}
+        };
+    }
+
+    let mut availiable_discriminant = 0;
+    for i in 0..variants.len() {
+        while vis_map[availiable_discriminant] {
+            availiable_discriminant += 1;
+        }
+        if index_map[i] {
+            continue;
+        }
+        int_lits[i] = availiable_discriminant;
+        vis_map[availiable_discriminant] = true;
+    }
+
+    Ok(int_lits
+        .into_iter()
+        .map(|usize_lit| Literal::usize_unsuffixed(usize_lit))
+        .collect())
+}
+
+fn get_discriminant_num(expr: &Expr) -> syn::Result<usize> {
+    if let Expr::Lit(ExprLit { lit, .. }) = expr {
+        if let Lit::Int(lit_int) = lit {
+            // TODO error parse
+            return Ok(lit_int.base10_digits().parse().unwrap());
+        }
+    }
+    Err(syn::Error::new(expr.span(), "expected int discriminant"))
 }

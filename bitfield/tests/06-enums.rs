@@ -79,13 +79,13 @@ fn main() {
 
     // Initialized to all 0 bits.
     let mut entry = RedirectionTableEntry::new();
-    assert_eq!(entry.get_acknowledged(), false);
-    assert_eq!(entry.get_trigger_mode(), TriggerMode::Edge);
-    assert_eq!(entry.get_delivery_mode(), DeliveryMode::Fixed);
+    assert_eq!(entry.get_acknowledged().unwrap(), false);
+    assert_eq!(entry.get_trigger_mode().unwrap(), TriggerMode::Edge);
+    assert_eq!(entry.get_delivery_mode().unwrap(), DeliveryMode::Fixed);
 
     entry.set_acknowledged(true);
     entry.set_delivery_mode(DeliveryMode::SMI);
-    assert_eq!(entry.get_acknowledged(), true);
-    assert_eq!(entry.get_trigger_mode(), TriggerMode::Edge);
-    assert_eq!(entry.get_delivery_mode(), DeliveryMode::SMI);
+    assert_eq!(entry.get_acknowledged().unwrap(), true);
+    assert_eq!(entry.get_trigger_mode().unwrap(), TriggerMode::Edge);
+    assert_eq!(entry.get_delivery_mode().unwrap(), DeliveryMode::SMI);
 }

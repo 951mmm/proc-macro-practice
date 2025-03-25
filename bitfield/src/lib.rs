@@ -1,3 +1,5 @@
+use std::{error::Error, fmt::Display};
+
 // Crates that have the "proc-macro" crate type are only allowed to export
 // procedural macros. So we cannot have one crate that defines procedural macros
 // alongside other types of public APIs like traits and structs.
@@ -32,12 +34,95 @@ impl Mod8Specifier for Byte {
     type Mod8Type = ZeroMod8;
 }
 
+impl UintSpecifier for Byte {
+    type Uint = u8;
+}
+
+pub trait BitfieldSpecifier {
+    type Bitfield: Sized + UintSpecifier + Mod8Specifier + Specifier;
+    type This;
+    type FromBitfieldReturn;
+    fn from_bitfield(bit_unit: <Self::Bitfield as UintSpecifier>::Uint)
+        -> Self::FromBitfieldReturn;
+    fn to_bitfield(this: &Self::This) -> <Self::Bitfield as UintSpecifier>::Uint;
+}
+
+impl BitfieldSpecifier for bool {
+    type Bitfield = B1;
+    type This = Self;
+    type FromBitfieldReturn = Result<Self::This>;
+    fn from_bitfield(
+        bit_unit: <Self::Bitfield as UintSpecifier>::Uint,
+    ) -> Self::FromBitfieldReturn {
+        match bit_unit {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(Unrecognized::new(bit_unit as u64)),
+        }
+    }
+    fn to_bitfield(this: &Self::This) -> <Self::Bitfield as UintSpecifier>::Uint {
+        match this {
+            false => 0,
+            true => 1,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Unrecognized(u64);
+
+impl Display for Unrecognized {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("unrecognized value: {}", self.raw_value()))
+    }
+}
+
+impl Error for Unrecognized {}
+impl Unrecognized {
+    pub fn new(raw_value: u64) -> Self {
+        Self(raw_value)
+    }
+    pub fn raw_value(&self) -> u64 {
+        self.0
+    }
+}
+
+pub type Result<T> = std::result::Result<T, Unrecognized>;
+
 #[cfg(test)]
 mod tests {
-    use crate::{Specifier, B61};
+    use crate::*;
 
     #[test]
     fn test_specifier() {
         assert_eq!(<B61 as Specifier>::BITS, 61);
+    }
+    #[test]
+    fn test_bit_specifier() {
+        enum E {
+            A = 0,
+            B,
+        }
+
+        impl BitfieldSpecifier for E {
+            type Bitfield = B50;
+            type This = Self;
+            type FromBitfieldReturn = Result<Self::This>;
+            fn from_bitfield(
+                bit_unit: <Self::Bitfield as UintSpecifier>::Uint,
+            ) -> Self::FromBitfieldReturn {
+                match bit_unit {
+                    0 => Ok(Self::A),
+                    1 => Ok(Self::B),
+                    _ => Err(Unrecognized(0 as u64)),
+                }
+            }
+            fn to_bitfield(this: &Self::This) -> <Self::Bitfield as UintSpecifier>::Uint {
+                match this {
+                    Self::A => 0,
+                    Self::B => 1,
+                }
+            }
+        }
     }
 }
