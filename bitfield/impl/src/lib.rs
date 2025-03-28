@@ -1,12 +1,11 @@
+use std::vec;
 
-use std::{iter, vec};
-
-use proc_macro::{ TokenStream};
+use proc_macro::TokenStream;
 use proc_macro2::{Literal, Span};
 use quote::quote;
 use syn::{
-    parse_macro_input, parse_quote, punctuated::Punctuated, spanned::Spanned, Attribute, Data,
-    DataEnum, DeriveInput, Field, Fields, FieldsNamed, Ident, Item, ItemStruct, Token, Type, Variant,
+    parse_macro_input, parse_quote, spanned::Spanned, Attribute, Data,
+    DataEnum, DeriveInput, Field, Fields, FieldsNamed, Ident, Item, ItemStruct, Type,
 };
 
 #[proc_macro_attribute]
@@ -296,7 +295,7 @@ pub fn generate_bits(_: TokenStream) -> TokenStream {
             impl BitfieldSpecifier for #ident {
                 type Bitfield = #ident;
                 type This = <Self::Bitfield as Specifier>::Uint;
-                type FromBitfieldReturn = Self::This;   
+                type FromBitfieldReturn = Self::This;
                 fn from_bitfield(bit_unit: <Self::Bitfield as Specifier>::Uint) -> Self::FromBitfieldReturn {
                     bit_unit
                 }
@@ -406,7 +405,9 @@ fn expand_bitfield_specifier(ast: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 .map(|variant| variant.ident.clone())
                 .collect::<Vec<_>>();
 
-            let flag = variants.iter().find(|variant| variant.discriminant.is_some());
+            let flag = variants
+                .iter()
+                .find(|variant| variant.discriminant.is_some());
             let uint_type = quote! {
                 <<Self as BitfieldSpecifier>::Bitfield as Specifier>::Uint
             };
@@ -418,8 +419,7 @@ fn expand_bitfield_specifier(ast: &DeriveInput) -> syn::Result<proc_macro2::Toke
                         #i
                     });
                 }
-            }
-            else {
+            } else {
                 let mut last_expr = None;
                 let mut cnt = 0;
                 for variant in variants {
@@ -427,25 +427,28 @@ fn expand_bitfield_specifier(ast: &DeriveInput) -> syn::Result<proc_macro2::Toke
                         cnt = 0;
                         last_expr = Some(expr);
                     }
-                    
+
                     let cnt_inner = Literal::i32_unsuffixed(cnt);
                     discriminants.push(quote! {
                         #last_expr + #cnt_inner
                     });
                     cnt += 1;
-                    
                 }
             }
 
-            let mut from_bitfield_stmts = discriminants.iter().zip(idents.iter()).map(|(discriminant, ident)| {
-                quote! {
-                    if bit_unit == (#discriminant) as #uint_type {
-                        return std::result::Result::Ok(Self::#ident);
+            let mut from_bitfield_stmts = discriminants
+                .iter()
+                .zip(idents.iter())
+                .map(|(discriminant, ident)| {
+                    quote! {
+                        if bit_unit == (#discriminant) as #uint_type {
+                            return std::result::Result::Ok(Self::#ident);
+                        }
                     }
-                }
-            }).collect::<Vec<_>>();
+                })
+                .collect::<Vec<_>>();
             from_bitfield_stmts.push(quote! {
-                return std::result::Result::Err(Unrecognized::new(bit_unit as u64)); 
+                return std::result::Result::Err(Unrecognized::new(bit_unit as u64));
             });
 
             let fn_from_bitfield = quote! {
@@ -469,7 +472,7 @@ fn expand_bitfield_specifier(ast: &DeriveInput) -> syn::Result<proc_macro2::Toke
                     type FromBitfieldReturn = Result<Self::This>;
                     #fn_from_bitfield
                     #fn_to_bitfield
-                } 
+                }
             })
         }
         _ => Err(syn::Error::new(ast.span(), "expected enum")),
