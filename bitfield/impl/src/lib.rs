@@ -2,10 +2,10 @@ use std::vec;
 
 use proc_macro::TokenStream;
 use proc_macro2::{Literal, Span};
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, parse_quote, spanned::Spanned, Attribute, Data,
-    DataEnum, DeriveInput, Field, Fields, FieldsNamed, Ident, Item, ItemStruct, Type,
+    parse_macro_input, parse_quote, spanned::Spanned, Attribute, Data, DataEnum, DeriveInput,
+    Field, Fields, FieldsNamed, Ident, Item, ItemStruct, Type,
 };
 
 #[proc_macro_attribute]
@@ -95,7 +95,8 @@ fn get_getters(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
     let mut offset_total_stmts = vec![quote! {let mut offset = 0u16;}];
     for field in fields {
         let ident = get_ident(field)?;
-        let fn_ident = Ident::new(&format!("get_{}", ident), ident.span());
+
+        let fn_ident = format_ident!("get_{}", ident, span = ident.span());
         let ty = &field.ty;
         let bitfield_ty = get_bitfield_ty(ty);
         let uint_type = quote! {<#bitfield_ty as Specifier>::Uint};
@@ -155,7 +156,7 @@ fn get_setters(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
     let mut offset_total_stmts = vec![quote! {let mut offset = 0u16;}];
     for field in fields {
         let ident = get_ident(field)?;
-        let fn_ident = Ident::new(&format!("set_{}", ident), ident.span());
+        let fn_ident = format_ident!("set_{}", ident);
         let ty = &field.ty;
         let bitfield_ty = get_bitfield_ty(&field.ty);
         let this_ty = get_this_ty(&field.ty);
@@ -275,14 +276,13 @@ fn get_bitfield_ty(ty: &Type) -> proc_macro2::TokenStream {
 pub fn generate_bits(_: TokenStream) -> TokenStream {
     let mut bits = vec![];
     for i in 0..63 {
-        let ident = Ident::new(&format!("B{}", i), Span::call_site());
+        let ident = format_ident!("B{}", i);
         let mod8_type = get_mod8_ident(i % 8, None);
         let uint_size = match get_uint_size(i) {
             Ok(uint_size) => uint_size,
             Err(e) => return e.to_compile_error().into(),
         };
-        let uint_type_literal = format!("u{}", uint_size);
-        let uint_type = Ident::new(&uint_type_literal, Span::call_site());
+        let uint_type = format_ident!("u{}", uint_size);
         let iu8 = i as u8;
 
         bits.push(quote! {
@@ -376,10 +376,9 @@ fn get_add_trait_impls() -> proc_macro2::TokenStream {
 }
 
 fn get_mod8_ident(n: usize, span: Option<Span>) -> Ident {
-    let ident_literal = format!("{}Mod8", PREFIX_MAP[n]);
     match span {
-        Some(span) => Ident::new(&ident_literal, span),
-        None => Ident::new(&ident_literal, Span::call_site()),
+        Some(span) => format_ident!("{}Mod8", PREFIX_MAP[n], span = span),
+        None => format_ident!("{}Mod8", PREFIX_MAP[n]),
     }
 }
 
@@ -397,9 +396,8 @@ fn expand_bitfield_specifier(ast: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let enum_ident = &ast.ident;
     match &ast.data {
         Data::Enum(DataEnum { variants, .. }) => {
-            let bitfield_type_literal = format!("B{}", get_bitfield_type_suffix(variants.len()));
-            let bitfield_type = Ident::new(&bitfield_type_literal, Span::call_site());
-            // let discriminants = get_discriminants(variants)?;
+            variants_len_power_of_2(variants.len())?;
+            let bitfield_type = format_ident!("B{}", get_bitfield_type_suffix(variants.len()));
             let idents = variants
                 .iter()
                 .map(|variant| variant.ident.clone())
@@ -481,4 +479,14 @@ fn expand_bitfield_specifier(ast: &DeriveInput) -> syn::Result<proc_macro2::Toke
 
 fn get_bitfield_type_suffix(len: usize) -> u8 {
     (len as f32).log2() as u8
+}
+
+fn variants_len_power_of_2(len: usize) -> syn::Result<()> {
+    if len.count_ones() != 1 {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "BitfieldSpecifier expected a number of variants which is a power of 2",
+        ));
+    }
+    Ok(())
 }
