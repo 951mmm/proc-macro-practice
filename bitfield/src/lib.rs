@@ -19,7 +19,6 @@ pub use checks::*;
 pub trait Specifier {
     const BITS: u8;
     type Uint;
-    type Mod8Type;
 }
 
 pub trait UintSpecifier {
@@ -32,7 +31,6 @@ pub struct Byte;
 impl Specifier for Byte {
     const BITS: u8 = 8;
     type Uint = u8;
-    type Mod8Type = ZeroMod8;
 }
 
 pub trait BitfieldSpecifier {

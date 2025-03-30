@@ -227,45 +227,23 @@ fn get_ident(field: &Field) -> syn::Result<Ident> {
 }
 
 fn get_fn_check(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
-    let mut associate_types = vec![];
+    let mut sum = vec![];
     for field in fields {
-        let bitfield_ty = get_bitfield_ty(&field.ty);
-        associate_types.push(quote! {
-            <#bitfield_ty as Specifier>::Mod8Type
-        });
+        let ty = get_bitfield_ty(&field.ty);
+        // 不需要考虑u8溢出
+        // mod sizeof(u8) mod 8 === mod 8
+        let bits = quote! {
+            <#ty as Specifier>::BITS
+        };
+        sum.push(bits);
     }
-
-    let mut sum = match associate_types.pop() {
-        Some(associate_type) => associate_type,
-        None => {
-            return Err(syn::Error::new(
-                Span::call_site(),
-                "fields should not be empty",
-            ))
-        }
-    };
-
-    while let Some(rhs) = associate_types.pop() {
-        sum = mod8_type_add(sum, rhs);
-    }
-
-    let check_fn = quote! {
+    let fn_check = quote! {
         #[allow(unused)]
         fn _unused_check() {
-            fn assert<N: TotalSizeIsMultipleOfEightBits>() {}
-            assert::<#sum>();
+            let _check_sum: TotalSizeIsMultipleOfEightBitsChecker<<[(); ((#(#sum)+*) % <Byte as Specifier>::BITS) as usize] as Mod8Result>::Result>;
         }
     };
-    Ok(check_fn)
-}
-
-fn mod8_type_add(
-    lhs: proc_macro2::TokenStream,
-    rhs: proc_macro2::TokenStream,
-) -> proc_macro2::TokenStream {
-    quote! {
-        <#lhs as std::ops::Add<#rhs>>::Output
-    }
+    Ok(fn_check)
 }
 
 fn get_bitfield_ty(ty: &Type) -> proc_macro2::TokenStream {
@@ -305,7 +283,6 @@ pub fn generate_bits(_: TokenStream) -> TokenStream {
     let mut bits = vec![];
     for i in 0..63 {
         let ident = format_ident!("B{}", i);
-        let mod8_type = get_mod8_ident(i % 8, None);
         let uint_size = match get_uint_size(i) {
             Ok(uint_size) => uint_size,
             Err(e) => return e.to_compile_error().into(),
@@ -318,7 +295,6 @@ pub fn generate_bits(_: TokenStream) -> TokenStream {
             impl Specifier for #ident {
                 const BITS: u8 = #iu8;
                 type Uint = #uint_type;
-                type Mod8Type = #mod8_type;
             }
             impl BitfieldSpecifier for #ident {
                 type Bitfield = #ident;
@@ -359,55 +335,27 @@ const PREFIX_MAP: [&str; 8] = [
 pub fn generate_mod8_types(_: TokenStream) -> TokenStream {
     let mut mod8_types = vec![];
     for i in 0..8 {
-        let ident = get_mod8_ident(i, None);
+        let ident = format_ident!("{}Mod8", PREFIX_MAP[i]);
         mod8_types.push(quote! {
             pub struct #ident;
+            impl Mod8Result for [(); #i] {
+                type Result = #ident;
+            }
         });
 
         if i == 0 {
             mod8_types.push(quote! {
-                impl TotalSizeIsMultipleOfEightBits for #ident {}
-            });
-        }
-    }
-
-    let add_trait_impls = get_add_trait_impls();
-
-    quote! {
-        #(#mod8_types)*
-        #add_trait_impls
-    }
-    .into()
-}
-
-fn get_add_trait_impls() -> proc_macro2::TokenStream {
-    let mut add_trait_impls = vec![];
-    for i in 0..8 {
-        for j in 0..8 {
-            let ident_i = get_mod8_ident(i, None);
-            let ident_j = get_mod8_ident(j, None);
-            let ident_output = get_mod8_ident((i + j) % 8, None);
-            add_trait_impls.push(quote! {
-                impl std::ops::Add<#ident_j> for #ident_i {
-                    type Output = #ident_output;
-                    fn add(self, _rhs: #ident_j) -> Self::Output {
-                        #ident_output
-                    }
+                impl TotalSizeIsMultipleOfEightBits for #ident {
+                    type PlaceHolder = ();
                 }
             });
         }
     }
 
     quote! {
-        #(#add_trait_impls)*
+        #(#mod8_types)*
     }
-}
-
-fn get_mod8_ident(n: usize, span: Option<Span>) -> Ident {
-    match span {
-        Some(span) => format_ident!("{}Mod8", PREFIX_MAP[n], span = span),
-        None => format_ident!("{}Mod8", PREFIX_MAP[n]),
-    }
+    .into()
 }
 
 #[proc_macro_derive(BitfieldSpecifier)]
