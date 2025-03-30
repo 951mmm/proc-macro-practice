@@ -8,7 +8,7 @@ use bitfield::*;
 
 #[bitfield]
 pub struct RedirectionTableEntry {
-    #[bits = 9]
+    // #[bits = 9]
     trigger_mode: TriggerMode,
     reserved: B7,
 }

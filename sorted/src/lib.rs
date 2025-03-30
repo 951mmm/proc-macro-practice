@@ -13,12 +13,10 @@ pub fn sorted(args: TokenStream, input: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args as SortedArgs);
     let ast = parse_macro_input!(input as Item);
 
-    let result = match expand(&args, &ast) {
+    match expand(&args, &ast) {
         Ok(token_stream) => token_stream.into(),
         Err(e) => e.to_compile_error().into(),
-    };
-
-    result
+    }
 }
 
 #[derive(Clone)]
@@ -79,11 +77,11 @@ fn check_order(lits: Vec<impl Ord + Display + Spanned>) -> syn::Result<()> {
     }
 
     for (mut index, cur) in iter {
-        if cur.lt(&prev) {
+        if cur.lt(prev) {
             loop {
                 index -= 1;
                 let prev = &lits[index];
-                if prev.lt(&cur) {
+                if prev.lt(cur) {
                     let next = &lits[index + 1];
                     return Err(syn::Error::new(
                         cur.span(),
@@ -128,16 +126,13 @@ fn expand_check(args: TokenStream, ast: &mut Item) -> syn::Result<()> {
     }
 }
 
-fn resolve_sorted_attr(stmts: &mut Vec<Stmt>) -> syn::Result<()> {
+fn resolve_sorted_attr(stmts: &mut [Stmt]) -> syn::Result<()> {
     for stmt in stmts.iter_mut() {
-        match stmt {
-            Stmt::Expr(expr, ..) => {
-                if let Expr::Match(expr_match) = expr {
-                    resolve_match_expr(expr_match);
-                    sorted_order_match(expr_match)?;
-                }
+        if let Stmt::Expr(expr, ..) = stmt {
+            if let Expr::Match(expr_match) = expr {
+                resolve_match_expr(expr_match);
+                sorted_order_match(expr_match)?;
             }
-            _ => (),
         }
     }
 
@@ -174,13 +169,11 @@ fn sorted_order_match(expr_match: &mut ExprMatch) -> syn::Result<()> {
         }
     }
 
-    if flag.is_some() {
-        if !matches!(&expr_match.arms.last().unwrap().pat, Pat::Wild(_)) {
-            return Err(syn::Error::new(
-                flag.unwrap(),
-                "wild match should be the last",
-            ));
-        }
+    if flag.is_some() && !matches!(&expr_match.arms.last().unwrap().pat, Pat::Wild(_)) {
+        return Err(syn::Error::new(
+            flag.unwrap(),
+            "wild match should be the last",
+        ));
     }
 
     check_order(paths)?;
@@ -191,7 +184,7 @@ fn resolve_match_expr(expr_match: &mut ExprMatch) {
     expr_match.attrs = expr_match
         .attrs
         .iter()
+        .filter(|&attr| !attr.path().is_ident("sorted"))
         .cloned()
-        .filter(|attr| !attr.path().is_ident("sorted"))
         .collect::<Vec<_>>();
 }

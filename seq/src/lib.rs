@@ -257,7 +257,7 @@ impl Parser {
                             }
                             TokenTree::Punct(punct) => {
                                 if matches!(punct.as_char(), '~') {
-                                    debug_assert!(ident_stack.len() > 0);
+                                    debug_assert!(!ident_stack.is_empty());
                                     state = State::Ident;
                                 } else {
                                     self.flush_ident_stack(&mut result, &mut ident_stack, n);
