@@ -1,8 +1,6 @@
 // Bitfield enums with any discriminant (implicit or explicit) outside of the
 // range 0..2^BITS should fail to compile.
 
-use std::ops::Add;
-
 use bitfield::*;
 
 const F: isize = 1;
@@ -19,25 +17,11 @@ pub enum DeliveryMode {
     External,
 }
 
-pub struct True;
-
-pub struct False;
-
-impl Add<True> for False {
-    type Output = False;
-    fn add(self, _rhs: True) -> Self::Output {
-        False
-    }
-}
-
-impl Add<True> for True {
-    type Output = True;
-    fn add(self, rhs: True) -> Self::Output {
-        True
-    }
-}
-
 fn main() {
     let bits = DeliveryMode::to_bitfield(&DeliveryMode::Startup);
+    let _a: DiscriminantInRangeChecker<
+        <[(); (F + 6 < 1 << <<DeliveryMode as BitfieldSpecifier>::Bitfield as Specifier>::BITS)
+            as usize] as ConditionResult>::Result,
+    >;
     println!("bits is: {}", bits >> 3);
 }

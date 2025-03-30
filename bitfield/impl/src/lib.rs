@@ -403,12 +403,14 @@ fn expand_bitfield_specifier(ast: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 .map(|variant| variant.ident.clone())
                 .collect::<Vec<_>>();
 
+            // 判断是否有预设discriminant
             let flag = variants
                 .iter()
                 .find(|variant| variant.discriminant.is_some());
             let uint_type = quote! {
                 <<Self as BitfieldSpecifier>::Bitfield as Specifier>::Uint
             };
+
             let mut discriminants = vec![];
             if flag.is_none() {
                 for i in 0..variants.len() {
@@ -462,6 +464,31 @@ fn expand_bitfield_specifier(ast: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 }
             };
 
+            let uint_bits = quote! {
+                <<Self as BitfieldSpecifier>::Bitfield as Specifier>::BITS
+            };
+            let fn_check_stmts = idents
+                .iter()
+                .zip(discriminants.iter())
+                .map(|(ident, discriminant)| {
+                    let size = quote! {
+                       #discriminant < (1 << #uint_bits)
+                    };
+                    let ident = format_ident!("_check_{}", ident, span = ident.span());
+                    quote! {
+                        #[allow(non_snake_case)]
+                        let #ident: DiscriminantInRangeChecker<<[(); (#size) as usize] as ConditionResult>::Result>;
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let fn_check = quote! {
+                #[allow(unused)]
+                fn _unused_check() {
+                    #(#fn_check_stmts)*
+                }
+            };
+
             Ok(quote! {
                 #[automatically_derived]
                 impl BitfieldSpecifier for #enum_ident {
@@ -470,6 +497,10 @@ fn expand_bitfield_specifier(ast: &DeriveInput) -> syn::Result<proc_macro2::Toke
                     type FromBitfieldReturn = Result<Self::This>;
                     #fn_from_bitfield
                     #fn_to_bitfield
+                }
+
+                impl #enum_ident {
+                    #fn_check
                 }
             })
         }
