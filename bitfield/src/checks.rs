@@ -38,7 +38,7 @@ mod tests {
 
     #[test]
     fn test_condition() {
-        type a = <<[(); (2 < 3) as usize] as  ConditionResult>::Result   as DiscriminantInRange>::PlaceHolder;
-        let _: a;
+        type A = <<[(); (2 < 3) as usize] as  ConditionResult>::Result   as DiscriminantInRange>::PlaceHolder;
+        let _: A;
     }
 }

@@ -4,8 +4,8 @@ use proc_macro::TokenStream;
 use proc_macro2::{Literal, Span};
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, parse_quote, spanned::Spanned, Attribute, Data, DataEnum, DeriveInput,
-    Field, Fields, FieldsNamed, Ident, Item, ItemStruct, Type,
+    parse_macro_input, parse_quote, spanned::Spanned, Attribute, Data, DataEnum, DeriveInput, Expr,
+    ExprLit, Field, Fields, FieldsNamed, Ident, Item, ItemStruct, Meta, Type,
 };
 
 #[proc_macro_attribute]
@@ -33,11 +33,13 @@ fn resolve_bitfield(ast: &mut Item) -> syn::Result<proc_macro2::TokenStream> {
         }) => {
             resolve_attr(attrs);
 
-            let impl_fn = resolve_fields(fields)?;
+            let fn_bits_check = get_fn_bits_check(fields)?;
+            let fn_impl = get_fn_impl(fields)?;
 
             Ok(quote! {
                 impl #ident {
-                    #impl_fn
+                    #fn_impl
+                    #fn_bits_check
                 }
             })
         }
@@ -51,10 +53,10 @@ fn resolve_attr(attrs: &mut Vec<Attribute>) {
     attrs.push(parse_quote! {#[repr(C)]});
 }
 
-fn resolve_fields(fields: &mut Fields) -> syn::Result<proc_macro2::TokenStream> {
+fn get_fn_impl(fields: &mut Fields) -> syn::Result<proc_macro2::TokenStream> {
     let getters = get_getters(fields)?;
     let setters = get_setters(fields)?;
-    let check_fn = get_check_fn(fields)?;
+    let fn_check = get_fn_check(fields)?;
 
     let mut total_size_stmts = vec![];
     for field in fields.iter() {
@@ -86,7 +88,7 @@ fn resolve_fields(fields: &mut Fields) -> syn::Result<proc_macro2::TokenStream> 
         #init_fn
         #getters
         #setters
-        #check_fn
+        #fn_check
     })
 }
 
@@ -224,7 +226,7 @@ fn get_ident(field: &Field) -> syn::Result<Ident> {
     }
 }
 
-fn get_check_fn(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
+fn get_fn_check(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
     let mut associate_types = vec![];
     for field in fields {
         let bitfield_ty = get_bitfield_ty(&field.ty);
@@ -270,6 +272,32 @@ fn get_bitfield_ty(ty: &Type) -> proc_macro2::TokenStream {
     quote! {
         <#ty as BitfieldSpecifier>::Bitfield
     }
+}
+
+fn get_fn_bits_check(fields: &Fields) -> syn::Result<proc_macro2::TokenStream> {
+    let mut bits_check_stmts = vec![];
+    for field in fields {
+        for attr in &field.attrs {
+            if let Meta::NameValue(ref name_value) = attr.meta {
+                if name_value.path.is_ident("bits") {
+                    if let Expr::Lit(ExprLit { ref lit, .. }) = name_value.value {
+                        let ty = &field.ty;
+                        let ident = format_ident!("_check_{}", get_ident(field)?);
+                        bits_check_stmts.push(quote! {
+                            #[allow(non_upper_case_globals)]
+                            const #ident: [(); #lit] = [(); <<#ty as BitfieldSpecifier>::Bitfield as Specifier>::BITS as usize];
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Ok(quote! {
+        #[allow(unused)]
+        fn _unused_bits_check() {
+            #(#bits_check_stmts)*
+        }
+    })
 }
 
 #[proc_macro]

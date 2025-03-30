@@ -1,27 +1,22 @@
-// Bitfield enums with any discriminant (implicit or explicit) outside of the
-// range 0..2^BITS should fail to compile.
+// This is just the compile_fail version of the previous test case, testing what
+// error happens if the user has written an incorrect #[bits = N] attribute.
+//
+// Ensure that the error message points to the incorrect attribute and contains
+// the correct number of bits in some form.
 
 use bitfield::*;
 
-const F: isize = 1;
-
-#[derive(BitfieldSpecifier)]
-pub enum DeliveryMode {
-    Fixed = F,
-    Lowest,
-    SMI,
-    RemoteRead,
-    NMI,
-    Init,
-    Startup,
-    External,
+#[bitfield]
+pub struct RedirectionTableEntry {
+    #[bits = 9]
+    trigger_mode: TriggerMode,
+    reserved: B7,
 }
 
-fn main() {
-    let bits = DeliveryMode::to_bitfield(&DeliveryMode::Startup);
-    let _a: DiscriminantInRangeChecker<
-        <[(); (F + 6 < 1 << <<DeliveryMode as BitfieldSpecifier>::Bitfield as Specifier>::BITS)
-            as usize] as ConditionResult>::Result,
-    >;
-    println!("bits is: {}", bits >> 3);
+#[derive(BitfieldSpecifier, Debug)]
+pub enum TriggerMode {
+    Edge = 0,
+    Level = 1,
 }
+
+fn main() {}
